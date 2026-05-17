@@ -6,7 +6,7 @@ import { submitOrderToPrestashop, updateOrderState } from '../services/orderServ
 import '../assets/css/ShoppingCart.css';
 
 export default function ShoppingCart() {
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const { cart, removeFromCart, updateQuantity, clearCart, getTotalPrice } = useCart();
   const navigate = useNavigate();
 
@@ -27,6 +27,14 @@ export default function ShoppingCart() {
 
   const handleCheckout = async (e) => {
     e.preventDefault();
+    // Empêcher la commande si l'utilisateur n'est pas connecté (visiteur invité)
+    const isGuest = !isAuthenticated || user?.role === 'guest' || String(user?.email || '').includes('anonymous');
+    if (isGuest) {
+      if (window.confirm("Vous êtes en visiteur : votre panier est stocké localement. Pour passer commande, vous devez vous connecter ou vous inscrire. Aller à la page de connexion ?")) {
+        navigate('/login?redirect=/cart');
+      }
+      return;
+    }
 
     if (!shippingInfo.address || !shippingInfo.city || !shippingInfo.postalCode) {
       alert('Veuillez remplir tous les champs de livraison');
@@ -179,7 +187,20 @@ export default function ShoppingCart() {
                 <div className="summary-row total"><span>Total :</span><span>{total} EUR</span></div>
               </div>
 
-              <form className="shipping-form" onSubmit={handleCheckout}>
+              {/* Si visiteur anonyme, afficher avertissement et désactiver la soumission */}
+              {!isAuthenticated || user?.role === 'guest' || String(user?.email || '').includes('anonymous') ? (
+                <div style={{ background: '#fff3f0', border: '1px solid #ffd6cc', padding: 16, borderRadius: 6, marginBottom: 12 }}>
+                  <strong>Visiteur invité :</strong> votre panier est stocké localement dans votre navigateur.
+                  <div style={{ marginTop: 8 }}>
+                    Pour finaliser une commande, vous devez vous connecter ou créer un compte.
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <button className="btn-submit-order" style={{ marginRight: 8 }} onClick={() => navigate('/login?redirect=/cart')}>Se connecter / S'inscrire</button>
+                    <button className="btn-submit-order" disabled style={{ opacity: 0.6 }}>Transmettre la commande</button>
+                  </div>
+                </div>
+              ) : (
+                <form className="shipping-form" onSubmit={handleCheckout}>
                 <h2>Adresse de livraison</h2>
                 <div className="form-group">
                   <label>Adresse</label>
@@ -202,10 +223,11 @@ export default function ShoppingCart() {
                     <option value="BE">Belgique</option>
                   </select>
                 </div>
-                <button type="submit" className="btn-submit-order" disabled={orderStatus === 'submitted' || orderStatus === 'error'}>
-                  {orderStatus === 'submitted' ? 'Transmission au serveur...' : 'Transmettre la commande'}
-                </button>
-              </form>
+                  <button type="submit" className="btn-submit-order" disabled={orderStatus === 'submitted' || orderStatus === 'error'}>
+                    {orderStatus === 'submitted' ? 'Transmission au serveur...' : 'Transmettre la commande'}
+                  </button>
+                </form>
+              )}
             </div>
           </>
         )}

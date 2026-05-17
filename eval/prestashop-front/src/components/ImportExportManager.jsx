@@ -320,7 +320,7 @@ export default function ImportExportManager() {
           // Détection flexible de la date
           const dateRaw = sanitize.text(row.date_availability_produit || row.date_produit || row.date);
           const date = dateRaw ? dateRaw.split('/').reverse().join('-') : "";
-
+         // console.log("Date détectée pour le produit", ref, ":", date);
           if (!name || !ref) continue;
 
           // Gestion de la catégorie
@@ -563,6 +563,7 @@ export default function ImportExportManager() {
               dateFormatted = `${dateRaw} 12:00:00`;
             }
           }
+         // console.log(`Traitement de la ligne ${i} pour ${email} : date="${dateRaw}", nom="${nom}", adresse="${adresse}", achat="${row.achat}", etat="${etatStr}"`);
 
           // Créer Client s'il n'existe pas déjà dans cet import
           let custId = emailToCustIdMap[email];
@@ -683,7 +684,32 @@ export default function ImportExportManager() {
             if (!orderId) throw new Error("Erreur ID order");
             localHistory.orders.push(orderId);
 
-            addLog(`Commande #${orderId} créée pour ${email} (État API: ${stateId})`, 'success');
+    
+            if (dateFormatted && orderId) {
+              try {
+               
+                const orderResp = await fetch(`${BASE_URL}/orders/${orderId}?ws_key=${API_KEY}`);
+                let xmlOrder = await orderResp.text();
+
+                if (xmlOrder.includes('<date_add><![CDATA[')) {
+                  xmlOrder = xmlOrder.replace(/<date_add><!\[CDATA\[.*?\]\]><\/date_add>/, `<date_add><![CDATA[${dateFormatted}]]></date_add>`);
+                } else {
+                  xmlOrder = xmlOrder.replace(/<date_add>.*?<\/date_add>/, `<date_add><![CDATA[${dateFormatted}]]></date_add>`);
+                }
+
+                if (xmlOrder.includes('<date_upd><![CDATA[')) {
+                  xmlOrder = xmlOrder.replace(/<date_upd><!\[CDATA\[.*?\]\]><\/date_upd>/, `<date_upd><![CDATA[${dateFormatted}]]></date_upd>`);
+                } else {
+                  xmlOrder = xmlOrder.replace(/<date_upd>.*?<\/date_upd>/, `<date_upd><![CDATA[${dateFormatted}]]></date_upd>`);
+                }
+                await updatePrestaData('orders', orderId, xmlOrder);
+                addLog(`Commande #${orderId} créée et antidatée au ${dateFormatted}`, 'success');
+              } catch (err) {
+                addLog(`Commande #${orderId} créée, mais impossible de forcer la date: ${err.message}`, 'warning');
+              }
+            } else {
+              addLog(`Commande #${orderId} créée pour ${email} (Date par défaut : Aujourd'hui)`, 'success');
+            }
           }
         }
       }

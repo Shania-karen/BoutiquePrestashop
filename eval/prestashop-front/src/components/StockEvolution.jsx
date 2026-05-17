@@ -6,7 +6,8 @@ export default function StockEvolution() {
   const [products, setProducts] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProduct, setSelectedProduct] = useState(null);
-  const [selectedDate, setSelectedDate] = useState(''); // Nouvel état pour la date
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [loading, setLoading] = useState(true);
   const [isFocused, setIsFocused] = useState(false);
 
@@ -51,7 +52,7 @@ export default function StockEvolution() {
       <div style={{ background: '#fff', padding: '20px', borderRadius: '4px', border: '1px solid #ddd', marginBottom: '20px' }}>
         <h2 style={{ margin: '0 0 20px 0', fontSize: '18px', color: '#000' }}> Configuration du suivi de stock</h2>
         
-        {/* Formulaires l'un en dessous de l'autre */}
+        {/* Filtres */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
           
           {/* 1. Formulaire Produit */}
@@ -92,25 +93,35 @@ export default function StockEvolution() {
             )}
           </div>
 
-          {/* 2. Formulaire Date */}
-          <div>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: '#666', marginBottom: '5px', textTransform: 'uppercase' }}>2. Filtrer par date (Optionnel)</label>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                style={inputStyle}
-              />
-              {selectedDate && (
-                <button 
-                  onClick={() => setSelectedDate('')}
-                  style={{ padding: '0 15px', background: '#f5f5f5', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
-                >
-                  Effacer date
-                </button>
-              )}
-            </div>
+          {/* 2. Filtre par période */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#666', textTransform: 'uppercase' }}>
+              Filtrer entre deux dates
+            </label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              style={{ ...inputStyle, maxWidth: '220px' }}
+            />
+            <span style={{ fontSize: '13px', color: '#666' }}>à</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              style={{ ...inputStyle, maxWidth: '220px' }}
+            />
+            {(startDate || endDate) && (
+              <button
+                onClick={() => {
+                  setStartDate('');
+                  setEndDate('');
+                }}
+                style={{ padding: '0 15px', background: '#f5f5f5', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', height: '42px' }}
+              >
+                Effacer
+              </button>
+            )}
           </div>
 
         </div>
@@ -120,7 +131,8 @@ export default function StockEvolution() {
       {selectedProduct ? (
         <DailyStockTable 
           productId={extractValue(selectedProduct.id)} 
-          selectedDate={selectedDate} 
+          startDate={startDate}
+          endDate={endDate}
         />
       ) : (
         <div style={{ textAlign: 'center', padding: '40px', border: '2px dashed #ddd', color: '#999', borderRadius: '4px', background: '#fafafa' }}>
