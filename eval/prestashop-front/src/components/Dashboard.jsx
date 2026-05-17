@@ -182,7 +182,7 @@ function Dashboard() {
       {/* FILTRE PAR DATE */}
       <div style={selectorStyle}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-          <label style={{ fontWeight: '600' }}>📅 Filtrer par date :</label>
+          <label style={{ fontWeight: '600' }}> Filtrer par date :</label>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Du</span>
             <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={inputStyle} />

@@ -216,7 +216,7 @@ export default function ImportExportManager() {
   };
 
   const rollback = async (history) => {
-    addLog("⚠️ DÉBUT DU ROLLBACK : Annulation des insertions...", "error");
+    addLog(" DÉBUT DU ROLLBACK : Annulation des insertions...", "error");
     try {
       for (const id of history.orders.reverse()) await deletePrestaData('orders', id).catch(e => null);
       for (const id of history.carts.reverse()) await deletePrestaData('carts', id).catch(e => null);
@@ -226,7 +226,7 @@ export default function ImportExportManager() {
       for (const id of history.product_option_values.reverse()) await deletePrestaData('product_option_values', id).catch(e => null);
       for (const id of history.product_options.reverse()) await deletePrestaData('product_options', id).catch(e => null);
       for (const id of history.products.reverse()) await deletePrestaData('products', id).catch(e => null);
-      addLog("✅ ROLLBACK TERMINÉ. La base a été nettoyée des données de cet import partiel.", "info");
+      addLog(" ROLLBACK TERMINÉ. La base a été nettoyée des données de cet import partiel.", "info");
     } catch (e) {
       addLog("Erreur critique lors du rollback manuel.", "error");
     }
@@ -236,13 +236,13 @@ export default function ImportExportManager() {
     if (!window.confirm("Voulez-vous vraiment TOUT effacer (Produits, Commandes, Clients, etc.) ? Cette action est irréversible.")) return;
     setIsResetting(true);
     setLogs([]);
-    addLog("🧹 DÉBUT DE LA RÉINITIALISATION GLOBALE...", "info");
+    addLog(" DÉBUT DE LA RÉINITIALISATION GLOBALE...", "info");
 
     const reset = async (resourceName, label) => {
       addLog(`Suppression des ${label}...`);
       const res = await resetEntireResource(resourceName);
       if (res && res.failed > 0) {
-        addLog(`⚠️ ${res.failed} ${label.toLowerCase()} n'ont pas pu être supprimés.`, "error");
+        addLog(` ${res.failed} ${label.toLowerCase()} n'ont pas pu être supprimés.`, "error");
       }
     };
 
@@ -255,7 +255,7 @@ export default function ImportExportManager() {
       await reset('combinations', 'Déclinaisons');
       await reset('product_option_values', 'Valeurs des attributs');
       await reset('product_options', 'Options de Produits');
-      addLog("✅ RÉINITIALISATION GLOBALE TERMINÉE.", "success");
+      addLog(" RÉINITIALISATION GLOBALE TERMINÉE.", "success");
     } catch (error) {
       addLog(`ERREUR lors de la réinitialisation : ${error.message}`, "error");
     } finally {
@@ -268,24 +268,24 @@ export default function ImportExportManager() {
     setLogs([]);
 
     // === PHASE DE VALIDATION (avant toute insertion) ===
-    addLog("🔍 PHASE DE VALIDATION : Vérification des fichiers CSV...", "info");
+    addLog(" PHASE DE VALIDATION : Vérification des fichiers CSV...", "info");
     const validation = validateCSVFiles(files.cat, files.dec, files.ord);
 
     if (!validation.valid) {
-      addLog(`❌ VALIDATION ÉCHOUÉE : ${validation.errors.length} erreur(s) détectée(s)`, "error");
+      addLog(` VALIDATION ÉCHOUÉE : ${validation.errors.length} erreur(s) détectée(s)`, "error");
       for (const err of validation.errors) {
         const icon = err.type === 'COLONNE_INCONNUE' ? '📋' :
           err.type === 'FORMAT_DATE' ? '📅' : '💰';
         addLog(`${icon} [${err.file}] ${err.message}`, "error");
       }
-      addLog("⛔ Import annulé. Corrigez les fichiers CSV et rechargez-les. Voir GUIDE_CORRECTION_IMPORT.md pour l'aide.", "error");
+      addLog("Import annulé. Corrigez les fichiers CSV et rechargez-les. Voir GUIDE_CORRECTION_IMPORT.md pour l'aide.", "error");
       // Réinitialiser les fichiers chargés
       setFiles({ cat: null, dec: null, ord: null, zip: null });
       setIsImporting(false);
       return;
     }
 
-    addLog("✅ Validation réussie — tous les fichiers sont conformes.", "success");
+    addLog(" Validation réussie — tous les fichiers sont conformes.", "success");
 
     const localHistory = {
       categories: [], products: [], product_options: [], product_option_values: [], combinations: [],
@@ -441,7 +441,7 @@ export default function ImportExportManager() {
                   }
                 }
               } catch (e) {
-                addLog(`⚠️ Impossible d'initialiser le stock de ${ref}: ${e.message}`, 'warning');
+                addLog(` Impossible d'initialiser le stock de ${ref}: ${e.message}`, 'warning');
               }
             }
             addLog(`Aucune déclinaison spécifiée pour le produit ${ref}, ignoré`, 'info');
@@ -501,7 +501,7 @@ export default function ImportExportManager() {
                 }
               }
             } catch (e) {
-              addLog(`⚠️ Stock non initialisé pour ${ref}_${val}: ${e.message}`, 'warning');
+              addLog(` Stock non initialisé pour ${ref}_${val}: ${e.message}`, 'warning');
             }
           }
 
@@ -553,6 +553,16 @@ export default function ImportExportManager() {
           const nom = sanitize.text(row.nom);
           const adresse = sanitize.text(row.adresse);
           const etatStr = sanitize.text(row.etat).toLowerCase();
+          const dateRaw = sanitize.text(row.date);
+          let dateFormatted = "";
+          if (dateRaw) {
+            const parts = dateRaw.split('/');
+            if (parts.length === 3) {
+              dateFormatted = `${parts[2]}-${parts[1]}-${parts[0]} 12:00:00`;
+            } else {
+              dateFormatted = `${dateRaw} 12:00:00`;
+            }
+          }
 
           // Créer Client s'il n'existe pas déjà dans cet import
           let custId = emailToCustIdMap[email];
@@ -625,7 +635,8 @@ export default function ImportExportManager() {
           if (!cartRows) throw new Error(`Panier vide détecté pour ${email}`);
 
           // Créer Panier
-          const cartXml = `<prestashop><cart><id_currency>1</id_currency><id_lang>1</id_lang><id_customer>${custId}</id_customer><id_address_delivery>${addrId}</id_address_delivery><id_address_invoice>${addrId}</id_address_invoice><associations><cart_rows>${cartRows}</cart_rows></associations></cart></prestashop>`;
+          const dateXml = dateFormatted ? `<date_add><![CDATA[${dateFormatted}]]></date_add><date_upd><![CDATA[${dateFormatted}]]></date_upd>` : '';
+          const cartXml = `<prestashop><cart><id_currency>1</id_currency><id_lang>1</id_lang><id_customer>${custId}</id_customer><id_address_delivery>${addrId}</id_address_delivery><id_address_invoice>${addrId}</id_address_invoice>${dateXml}<associations><cart_rows>${cartRows}</cart_rows></associations></cart></prestashop>`;
           const cartRes = await postPrestaData('carts', cartXml);
           const cartId = extractXmlId(cartRes, 'id');
           if (!cartId) throw new Error("Erreur ID cart");
@@ -642,7 +653,7 @@ export default function ImportExportManager() {
 
             // Créer la commande directement avec l'état final voulu
             // (pas d'état intermédiaire → pas de double transition → pas de "Erreur de paiement")
-            const orderXml = `<prestashop><order><id_cart>${cartId}</id_cart><id_carrier>1</id_carrier><id_currency>1</id_currency><id_lang>1</id_lang><id_customer>${custId}</id_customer><id_address_delivery>${addrId}</id_address_delivery><id_address_invoice>${addrId}</id_address_invoice><current_state>${stateId}</current_state><module>ps_wirepayment</module><payment>Virement</payment><total_paid>${orderTTC.toFixed(6)}</total_paid><total_paid_tax_incl>${orderTTC.toFixed(6)}</total_paid_tax_incl><total_paid_tax_excl>${orderHT.toFixed(6)}</total_paid_tax_excl><total_paid_real>${orderTTC.toFixed(6)}</total_paid_real><total_products>${orderHT.toFixed(6)}</total_products><total_products_wt>${orderTTC.toFixed(6)}</total_products_wt><conversion_rate>1</conversion_rate></order></prestashop>`;
+           const orderXml = `<prestashop><order><id_cart>${cartId}</id_cart><id_carrier>1</id_carrier><id_currency>1</id_currency><id_lang>1</id_lang><id_customer>${custId}</id_customer><id_address_delivery>${addrId}</id_address_delivery><id_address_invoice>${addrId}</id_address_invoice><current_state>${stateId}</current_state><module>ps_wirepayment</module><payment>Virement</payment><total_paid>${orderTTC.toFixed(6)}</total_paid><total_paid_tax_incl>${orderTTC.toFixed(6)}</total_paid_tax_incl><total_paid_tax_excl>${orderHT.toFixed(6)}</total_paid_tax_excl><total_paid_real>${orderTTC.toFixed(6)}</total_paid_real><total_products>${orderHT.toFixed(6)}</total_products><total_products_wt>${orderTTC.toFixed(6)}</total_products_wt><conversion_rate>1</conversion_rate>${dateXml}</order></prestashop>`;
             let orderId;
             try {
               const orderRes = await postPrestaData('orders', orderXml);
@@ -650,7 +661,7 @@ export default function ImportExportManager() {
             } catch (err) {
               // PrestaShop renvoie souvent une 500 à cause de hooks internes (gamification, etc.)
               // mais la commande est quand même insérée en base
-              addLog(`⚠️ Erreur API commande (${err.message.substring(0, 100)}), vérification...`, 'warning');
+              addLog(` Erreur API commande (${err.message.substring(0, 100)}), vérification...`, 'warning');
               
               // Attendre un peu que PrestaShop finalise l'insertion
               await new Promise(r => setTimeout(r, 500));
@@ -677,9 +688,9 @@ export default function ImportExportManager() {
         }
       }
 
-      addLog("✅ IMPORTATION TERMINÉE", "success");
+      addLog(" IMPORTATION TERMINÉE", "success");
     } catch (err) {
-      addLog(`❌ ERREUR GLOBALE : ${err.message}`, "error");
+      addLog(` ERREUR GLOBALE : ${err.message}`, "error");
       await rollback(localHistory);
     } finally {
       setIsImporting(false);

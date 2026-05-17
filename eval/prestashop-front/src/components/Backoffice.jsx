@@ -7,6 +7,7 @@ import ResetDashboard from './ResetDashboard';
 import ImportExportManager from './ImportExportManager';
 import AdminOrders from './AdminOrders';
 import StockManager from './StockManager';
+import StockEvolution from './StockEvolution';
 import '../assets/css/Backoffice.css';
 
 /**
@@ -34,8 +35,8 @@ export default function Backoffice() {
 
       case 'dashboard':
         return <Dashboard />;
-      case 'reset':
-        return <ResetDashboard />;
+      case 'stockEvolution':
+        return <StockEvolution />;
       case 'import':
         return <ImportExportManager />;
       default:
@@ -97,10 +98,10 @@ export default function Backoffice() {
               Import/Export
             </button>
             <button
-              className={`nav-item ${currentView === 'reset' ? 'active' : ''}`}
-              onClick={() => setCurrentView('reset')}
+              className={`nav-item ${currentView === 'stockEvolution' ? 'active' : ''}`}
+              onClick={() => setCurrentView('stockEvolution')}
             >
-              Réinitialiser DB
+              Évolution du stock
             </button>
           </nav>
         </aside>

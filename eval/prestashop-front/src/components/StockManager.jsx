@@ -248,7 +248,7 @@ export default function StockManager() {
       {/* HEADER */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
-          <h2 style={{ margin: 0, color: '#000', fontSize: '20px' }}>📦 Gestion des Stocks</h2>
+          <h2 style={{ margin: 0, color: '#000', fontSize: '20px' }}>Gestion des Stocks</h2>
           <p style={{ margin: '4px 0 0', color: '#888', fontSize: '13px' }}>
             Gérez la disponibilité de vos produits
           </p>
