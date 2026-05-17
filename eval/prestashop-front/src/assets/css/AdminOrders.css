@@ -1,0 +1,246 @@
+/* --- Conteneur Principal --- */
+.admin-orders-container {
+  max-width: 1400px;
+  margin: 60px auto;
+  padding: 0 30px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #000000;
+}
+
+.admin-orders-title {
+  font-size: 1.5rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 40px;
+  border-left: 5px solid #000000;
+  padding-left: 20px;
+  line-height: 1;
+}
+
+/* --- Table & Wrapper --- */
+.orders-table-wrapper {
+  overflow-x: auto;
+  border: 1px solid #e0e0e0;
+}
+
+.orders-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+}
+
+.orders-table thead {
+  background: #f9f9f9;
+  border-bottom: 2px solid #000000;
+}
+
+.orders-table th {
+  padding: 18px 15px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #000000;
+  text-align: left;
+}
+
+.orders-table td {
+  padding: 16px 15px;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 0.85rem;
+  vertical-align: middle;
+}
+
+.orders-table tbody tr:hover {
+  background: #fafafa;
+}
+
+/* --- Cellules et Badges --- */
+.id-cell {
+  font-weight: 700;
+}
+
+.reference-cell {
+  font-family: 'Courier New', monospace;
+  font-weight: 600;
+  color: #666;
+}
+
+/* Badges Rectangulaires Minimalistes */
+.badge-new, .badge-no {
+  display: inline-block;
+  padding: 4px 10px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  border: 1px solid #000000;
+  border-radius: 3px;
+}
+
+.state-select {
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-view {
+  padding: 6px 14px;
+  border: 1px solid #000;
+  background: #fff;
+  color: #000;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.15s;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.btn-view:hover {
+  background: #000;
+  color: #fff;
+}
+
+/* ============================================ */
+/* === PANNEAU DÉTAIL COMMANDE (style PS) === */
+/* ============================================ */
+
+.detail-row td {
+  background: #f8f9fa;
+  border-bottom: 3px solid #000 !important;
+}
+
+.order-detail-panel {
+  padding: 25px 30px;
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* En-tête du détail */
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 25px;
+  padding-bottom: 15px;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.detail-header h3 {
+  font-size: 1.1rem;
+  font-weight: 800;
+  margin: 0 0 4px 0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.detail-date {
+  font-size: 0.8rem;
+  color: #888;
+}
+
+.detail-state-badge {
+  display: inline-block;
+  padding: 6px 16px;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Grille 2 colonnes */
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 30px;
+}
+
+@media (max-width: 900px) {
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Titres de section */
+.detail-section-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #000;
+  margin: 0 0 12px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+/* Table des produits */
+.detail-products-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.detail-products-table th {
+  background: #fff;
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 700;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #555;
+  border-bottom: 2px solid #ddd;
+}
+
+.detail-products-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.detail-products-table tbody tr:hover {
+  background: #f0f0f0;
+}
+
+/* Bloc d'information */
+.detail-info-block {
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  padding: 14px 16px;
+}
+
+.detail-info-block p {
+  margin: 3px 0;
+  font-size: 0.85rem;
+}
+
+/* Récapitulatif financier */
+.detail-recap-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  font-size: 0.85rem;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.detail-recap-row:last-child {
+  border-bottom: none;
+}
+
+.detail-recap-total {
+  font-weight: 800;
+  font-size: 1rem;
+  border-top: 2px solid #000;
+  padding-top: 10px;
+  margin-top: 4px;
+}

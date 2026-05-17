@@ -1,0 +1,2 @@
+mysqldump -u root -p prestashop > backupPrestaShopMandeha.sql
+mysqldump -u root -p prestasho table_specifique > backup_table.sql

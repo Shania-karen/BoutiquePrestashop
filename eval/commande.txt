@@ -1,0 +1,2 @@
+Dump database : mysqldump -u root -p prestashop > eval.sql
+Import : Get-Content ".\eval.sql" | mysql -u root -p prestashop

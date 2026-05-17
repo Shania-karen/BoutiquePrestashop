@@ -1,0 +1,131 @@
+/* API Test Page */
+.api-test-container {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 30px 20px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.api-test-container h1 {
+  font-size: 24px;
+  color: #000;
+  margin-bottom: 20px;
+}
+
+/* Button */
+.btn-test {
+  padding: 12px 24px;
+  background: #000;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  transition: background 0.2s;
+}
+
+.btn-test:hover:not(:disabled) {
+  background: #333;
+}
+
+.btn-test:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+/* Error Box */
+.error-box {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 3px;
+  padding: 16px;
+  margin-bottom: 20px;
+  color: #856404;
+}
+
+.error-box h3 {
+  margin-top: 0;
+  color: #856404;
+}
+
+.error-box pre {
+  background: #fff;
+  padding: 12px;
+  border-radius: 2px;
+  overflow-x: auto;
+  font-size: 12px;
+  color: #333;
+}
+
+/* Results Box */
+.results-box {
+  background: #f0f8ff;
+  border: 1px solid #87ceeb;
+  border-radius: 3px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.results-box h2 {
+  margin-top: 0;
+  color: #000;
+  font-size: 18px;
+}
+
+.result-item {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.result-item:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.result-item strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #000;
+  font-size: 14px;
+}
+
+.result-item pre {
+  background: white;
+  padding: 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 2px;
+  overflow-x: auto;
+  font-size: 11px;
+  color: #333;
+  margin: 0;
+}
+
+/* Info Box */
+.info-box {
+  background: #f9f9f9;
+  border: 1px solid #e0e0e0;
+  border-radius: 3px;
+  padding: 16px;
+  margin-top: 20px;
+}
+
+.info-box h3 {
+  margin-top: 0;
+  color: #000;
+  font-size: 14px;
+}
+
+.info-box ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.info-box li {
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #333;
+}
