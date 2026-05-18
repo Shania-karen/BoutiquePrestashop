@@ -602,7 +602,7 @@ export default function ImportExportManager() {
 
             const productId = refToIdMap[pRef];
             const combId = refToCombMap[`${pRef}_${pVar}`] || 0;
-
+            //const combId = refToCombMap[`${pRef}_${pVar}`] ?? refToCombMap[`${pRef}-${pVar}`] ?? 0;
             if (!productId) throw new Error(`Référence produit ${pRef} non trouvée dans le panier de ${email}`);
 
             // === CALCUL DES TAXES ET TOTAUX DE LA COMMANDE ===

@@ -8,6 +8,7 @@ import ImportExportManager from './ImportExportManager';
 import AdminOrders from './AdminOrders';
 import StockManager from './StockManager';
 import StockEvolution from './StockEvolution';
+import CategoryStockTable from './CategoryStockTable';
 import '../assets/css/Backoffice.css';
 
 /**
@@ -39,6 +40,8 @@ export default function Backoffice() {
         return <StockEvolution />;
       case 'import':
         return <ImportExportManager />;
+      case 'categoryStock':
+        return <CategoryStockTable />;
       default:
         return <Dashboard />;
     }
@@ -102,6 +105,12 @@ export default function Backoffice() {
               onClick={() => setCurrentView('stockEvolution')}
             >
               Évolution du stock
+            </button>
+            <button
+              className={`nav-item ${currentView === 'categoryStock' ? 'active' : ''}`}
+              onClick={() => setCurrentView('categoryStock')}
+            >
+              Stocks par catégorie
             </button>
           </nav>
         </aside>

@@ -6,7 +6,6 @@ import '../assets/css/OrderList.css';
 
 export default function OrderList() {
   const { user, isAuthenticated } = useAuth();
-  const { cart: localCart, getTotalPrice } = useCart();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -25,7 +24,7 @@ export default function OrderList() {
       try {
         setLoading(true);
 
-        // A. Récupérer les produits pour avoir les noms/prix des paniers
+        // A. Récupérer les produits pour avoir les noms/prix
         const productsData = await fetchPrestaData('products?display=full');
         const pList = productsData?.products?.product || [];
         const productsArray = Array.isArray(pList) ? pList : [pList];
@@ -41,19 +40,15 @@ export default function OrderList() {
           productsMap[id] = { name, priceHT };
         });
 
-        // B. Récupérer les commandes
+        // B. Récupérer les commandes du client
         const ordersData = await fetchPrestaData('orders?display=full', 0, 200);
         const oArray = ordersData?.orders?.order || [];
         const allOrdersList = Array.isArray(oArray) ? oArray : [oArray];
         const userOrders = allOrdersList.filter(o => extractValue(o.id_customer) === String(user.id));
         
-        const orderedCartIds = userOrders.map(o => extractValue(o.id_cart));
-
-        // Nous n'avons plus besoin de récupérer les paniers API ici car CartContext s'en charge.
-
         let combinedItems = [];
 
-        // Traitement des commandes
+        // Traitement des commandes selon la machine à états
         userOrders.forEach(order => {
             const orderRows = order.associations?.order_rows?.order_row;
             const prods = Array.isArray(orderRows) ? orderRows : (orderRows ? [orderRows] : []);
@@ -64,10 +59,18 @@ export default function OrderList() {
                 price: parseFloat(extractValue(p.unit_price_tax_incl) || extractValue(p.product_price) || 0).toFixed(2)
             }));
 
-            const stateId = extractValue(order.current_state);
-            let stateInfo = { text: 'en cours', color: '#FFA500' };
-            if (String(stateId) === '2') stateInfo = { text: 'paiement effectué', color: '#28a745' };
-            else if (String(stateId) === '6') stateInfo = { text: 'annulé', color: '#dc3545' };
+            // --- HARMONISATION DES STATUTS CLIENT AVEC LE BACKOFFICE ---
+            const stateId = String(extractValue(order.current_state));
+            let stateInfo = { text: 'En cours', color: '#FFA500' };
+            
+            // On regroupe le statut 2 et le 11 sous le même affichage "Payé"
+            if (stateId === '2' || stateId === '11') {
+              stateInfo = { text: 'Payé', color: '#28a745' };
+            } else if (stateId === '5') {
+              stateInfo = { text: 'Livré', color: '#107c41' };
+            } else if (stateId === '6') {
+              stateInfo = { text: 'Annulé', color: '#dc3545' };
+            }
 
             combinedItems.push({
                 type: 'order',
@@ -79,12 +82,6 @@ export default function OrderList() {
                 products
             });
         });
-
-        // Les paniers API non commandés sont désormais synchronisés dans CartContext 
-        // et affichés via "Mon Panier Actuel" (localCart). Il n'est donc plus
-        // nécessaire de les afficher en double ici.
-
-        // Les paniers locaux ne sont plus affichés ici selon la nouvelle règle de gestion.
 
         combinedItems.sort((a, b) => b.date - a.date);
         setOrders(combinedItems);
@@ -118,7 +115,7 @@ export default function OrderList() {
       <h2 className="order-list-title">Mes Commandes & Paniers</h2>
       
       {orders.length === 0 ? (
-        <div className="empty-orders">Vous n'avez passé aucune commande et n'avez aucun panier en cours pour le moment.</div>
+        <div className="empty-orders">Vous n'avez passé aucune commande pour le moment.</div>
       ) : (
         <div className="orders-wrapper">
           {orders.map(item => {
@@ -142,9 +139,6 @@ export default function OrderList() {
                       >
                         {item.stateInfo.text.toUpperCase()}
                       </span>
-                      {item.description && (
-                        <span style={{ fontSize: '0.75rem', color: '#666', marginTop: '4px' }}>{item.description}</span>
-                      )}
                     </div>
                     <span className="expand-icon">{isExpanded ? '▲' : '▼'}</span>
                   </div>
@@ -154,19 +148,15 @@ export default function OrderList() {
                 {isExpanded && (
                   <div className="order-expanded-content" style={{ gridTemplateColumns: '1fr' }}>
                     <div className="order-products-section">
-                      <h4 className="section-title">Produits {item.type === 'cart' ? 'dans le panier' : 'commandés'}</h4>
+                      <h4 className="section-title">Produits commandés</h4>
                       <div className="order-products-list">
-                        {item.products.length === 0 ? (
-                          <div className="no-data">Aucun produit trouvé.</div>
-                        ) : (
-                          item.products.map((prod, idx) => (
-                            <div key={idx} className="order-product-item">
-                              <span className="product-qty">{prod.qty}x</span>
-                              <span className="product-name">{prod.name}</span>
-                              <span className="product-price">{prod.price} €</span>
-                            </div>
-                          ))
-                        )}
+                        {item.products.map((prod, idx) => (
+                          <div key={idx} className="order-product-item">
+                            <span className="product-qty">{prod.qty}x</span>
+                            <span className="product-name">{prod.name}</span>
+                            <span className="product-price">{prod.price} €</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </div>

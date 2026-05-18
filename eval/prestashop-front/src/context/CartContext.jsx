@@ -176,6 +176,21 @@ export function CartProvider({ children }) {
 
   const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
 
+  // Calcul des totaux HT et TTC du panier (assumant 20% de TVA par défaut)
+  const getTotalHT = (taxRate = 0.20) => {
+    const totalWithTax = parseFloat(getTotalPrice()) || 0;
+    const totalHT = totalWithTax / (1 + taxRate);
+    return totalHT.toFixed(2);
+  };
+
+  const getTotalTTC = () => getTotalPrice();
+
+  const getTotalTaxes = (taxRate = 0.20) => {
+    const ttc = parseFloat(getTotalTTC()) || 0;
+    const ht = parseFloat(getTotalHT(taxRate)) || 0;
+    return (ttc - ht).toFixed(2);
+  };
+
   return (
     <CartContext.Provider value={{
       cart,
@@ -184,6 +199,9 @@ export function CartProvider({ children }) {
       updateQuantity,
       clearCart,
       getTotalPrice,
+      getTotalHT,
+      getTotalTTC,
+      getTotalTaxes,
       totalItems,
     }}>
       {children}

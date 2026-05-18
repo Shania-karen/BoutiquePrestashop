@@ -4,19 +4,38 @@ import {
   BarChart, Bar
 } from 'recharts';
 import { fetchPrestaData, extractValue } from '../services/apiClient';
+import { useCart } from '../context/CartContext';
+import { fetchStockAvailable } from '../services/productservice';
 
 const WIDGETS_DISPONIBLES = [
   { id: 'kpis', label: ' KPIs Généraux' },
   { id: 'salesGraph', label: ' Courbe des ventes' },
   { id: 'amountGraph', label: ' Courbe des revenus' },
-  { id: 'dailyTable', label: ' Tableau par jour' }
+  { id: 'dailyTable', label: ' Tableau par jour' },
+  { id: 'productsStats', label: ' Totaux Produits (Inventaire)' },
+  { id: 'cartStats', label: ' Totaux Panier' }
 ];
 
 function Dashboard() {
-  const [activeWidgets, setActiveWidgets] = useState(['kpis', 'salesGraph', 'amountGraph', 'dailyTable']);
+  let cartContext = null;
+  try {
+    cartContext = useCart();
+  } catch (e) {
+    // Dashboard pas enrobé dans CartProvider - utiliser un fallback
+    cartContext = {
+      cart: [],
+      totalItems: 0,
+      getTotalTTC: () => '0.00',
+      getTotalHT: () => '0.00',
+      getTotalTaxes: () => '0.00'
+    };
+  }
+  const [activeWidgets, setActiveWidgets] = useState(['kpis', 'salesGraph', 'amountGraph', 'dailyTable', 'productsStats', 'cartStats']);
   const [allOrders, setAllOrders] = useState([]);
   const [taxRates, setTaxRates] = useState({});
+  const [allProducts, setAllProducts] = useState([]);
   const [orphanCartCount, setOrphanCartCount] = useState(0);
+  const [apiCartSummary, setApiCartSummary] = useState(null);
   const [loading, setLoading] = useState(true);
 
   // Filtres par date
@@ -33,20 +52,38 @@ function Dashboard() {
         let orders = data?.orders?.order || [];
         if (!Array.isArray(orders)) orders = orders ? [orders] : [];
 
-        // 2. Charger les produits pour récupérer le taux de taxe (stocké dans supplier_reference)
-        const prodsData = await fetchPrestaData('products?display=[id,supplier_reference]', 0, 500);
+        // 2. Charger les produits avec leurs prix TTC, TVA (supplier_reference) et stock réel
+        const prodsData = await fetchPrestaData('products?display=[id,reference,name,price,supplier_reference]', 0, 500);
         let prods = prodsData?.products?.product || [];
         if (!Array.isArray(prods)) prods = prods ? [prods] : [];
-        const taxRateMap = {};
-        prods.forEach(p => {
+
+        const productsWithStock = await Promise.all(prods.map(async (p) => {
           const pid = extractValue(p.id);
-          taxRateMap[pid] = parseFloat(extractValue(p.supplier_reference)) || 0;
+          const priceTTC = parseFloat(extractValue(p.price)) || 0;
+          const taxRate = parseFloat(extractValue(p.supplier_reference)) || 0;
+          const stockQty = await fetchStockAvailable(pid, 0);
+          const priceHT = taxRate > 0 ? priceTTC / (1 + (taxRate / 100)) : priceTTC;
+
+          return {
+            ...p,
+            priceHT,
+            priceTTC,
+            taxRate,
+            stockQty,
+          };
+        }));
+
+        const taxRateMap = {};
+        productsWithStock.forEach(p => {
+          const pid = extractValue(p.id);
+          taxRateMap[pid] = Number(p.taxRate) || 0;
         });
 
         setAllOrders(orders);
         setTaxRates(taxRateMap);
+        setAllProducts(productsWithStock);
 
-        // 2. Charger les paniers pour trouver les orphelins
+        // 3. Charger les paniers pour trouver les orphelins et calculer les totaux panier
         const ordersCartIds = new Set(orders.map(o => extractValue(o.id_cart)));
         const cartsData = await fetchPrestaData('carts', 0, 1000);
         let carts = cartsData?.carts?.cart || [];
@@ -56,6 +93,33 @@ function Dashboard() {
           return cid && !ordersCartIds.has(cid);
         });
         setOrphanCartCount(orphans.length);
+
+        const productMap = new Map(productsWithStock.map(p => [String(extractValue(p.id)), p]));
+        let cartItems = 0;
+        let cartHT = 0;
+        let cartTTC = 0;
+
+        orphans.forEach(cart => {
+          const cartRows = cart.associations?.cart_rows?.cart_row;
+          const rows = Array.isArray(cartRows) ? cartRows : (cartRows ? [cartRows] : []);
+          rows.forEach(row => {
+            const productId = String(extractValue(row.id_product));
+            const qty = Number(extractValue(row.quantity)) || 0;
+            const product = productMap.get(productId);
+            if (!product || qty <= 0) return;
+
+            cartItems += qty;
+            cartHT += (Number(product.priceHT) || 0) * qty;
+            cartTTC += (Number(product.priceTTC) || 0) * qty;
+          });
+        });
+
+        setApiCartSummary({
+          totalCartItems: cartItems,
+          totalCartHT: cartHT,
+          totalCartTTC: cartTTC,
+          totalCartTaxes: cartTTC - cartHT,
+        });
       } catch (error) {
         console.error("Erreur chargement dashboard:", error);
       } finally {
@@ -144,6 +208,72 @@ function Dashboard() {
       }
     };
   }, [allOrders, dateFrom, dateTo, orphanCartCount, taxRates]);
+
+  // Calcul des totaux produits (inventaire)
+  const productsStats = useMemo(() => {
+    if (!Array.isArray(allProducts) || allProducts.length === 0) {
+      return {
+        totalProducts: 0,
+        totalProductsHT: '0.00',
+        totalProductsTTC: '0.00',
+        totalTaxes: '0.00'
+      };
+    }
+
+    let totalProductsTTC = 0;
+    let totalProductsHT = 0;
+    let totalProducts = 0;
+
+    allProducts.forEach(prod => {
+      const priceHT = Number(prod.priceHT) || 0;
+      const priceTTC = Number(prod.priceTTC) || 0;
+      const quantity = Number(prod.stockQty) || 0;
+
+      totalProductsHT += priceHT * quantity;
+      totalProductsTTC += priceTTC * quantity;
+      totalProducts += 1;
+    });
+
+    return {
+      totalProducts,
+      totalProductsHT: totalProductsHT.toFixed(2),
+      totalProductsTTC: totalProductsTTC.toFixed(2),
+      totalTaxes: (totalProductsTTC - totalProductsHT).toFixed(2)
+    };
+  }, [allProducts]);
+
+  // Calcul des totaux du panier
+  const cartStats = useMemo(() => {
+    if (apiCartSummary) {
+      return {
+        totalCartItems: apiCartSummary.totalCartItems || 0,
+        totalCartHT: (Number(apiCartSummary.totalCartHT) || 0).toFixed(2),
+        totalCartTTC: (Number(apiCartSummary.totalCartTTC) || 0).toFixed(2),
+        totalCartTaxes: (Number(apiCartSummary.totalCartTaxes) || 0).toFixed(2)
+      };
+    }
+
+    if (!cartContext || !cartContext.cart) {
+      return {
+        totalCartItems: 0,
+        totalCartHT: '0.00',
+        totalCartTTC: '0.00',
+        totalCartTaxes: '0.00'
+      };
+    }
+
+    const cartTTC = parseFloat(cartContext.getTotalTTC?.() || 0);
+    const cartHT = parseFloat(cartContext.getTotalHT?.() || 0);
+    const cartTaxes = parseFloat(cartContext.getTotalTaxes?.() || 0);
+    const cartItems = cartContext.totalItems || 0;
+
+    return {
+      totalCartItems: cartItems,
+      totalCartHT: isNaN(cartHT) ? '0.00' : cartHT.toFixed(2),
+      totalCartTTC: isNaN(cartTTC) ? '0.00' : cartTTC.toFixed(2),
+      totalCartTaxes: isNaN(cartTaxes) ? '0.00' : cartTaxes.toFixed(2)
+    };
+  }, [apiCartSummary, cartContext, cartContext?.cart?.length]);
 
   const handleToggleWidget = (widgetId) => {
     setActiveWidgets(prev => 
@@ -309,6 +439,32 @@ function Dashboard() {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* === TOTAUX PRODUITS (INVENTAIRE) === */}
+        {activeWidgets.includes('productsStats') && (
+          <div style={{...widgetStyle}}>
+            <h3> Totaux Paniers + Commandes </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginTop: '15px' }}>
+             {/* {kpiCard('Nombre de produits', `${productsStats.totalProducts}`, 'Tous les produits')} */}
+              {kpiCard('Total HT', `${(Number(cartStats.totalCartHT) + Number(stats.totalHT)).toFixed(2)} €`, 'Somme des prix HT')}
+             {/* {kpiCard('Total Taxes', `${productsStats.totalTaxes} €`, 'TVA estimée')} */}
+              {kpiCard('Total TTC', `${(Number(cartStats.totalCartTTC) + Number(stats.totalTTC)).toFixed(2)} €`, 'Prix publics', '#000', '#fff')}
+            </div>
+          </div>
+        )}
+
+        {/* === TOTAUX PANIER === */}
+        {activeWidgets.includes('cartStats') && (
+          <div style={{...widgetStyle}}>
+            <h3> Totaux Panier</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginTop: '15px' }}>
+              {kpiCard('Articles', `${cartStats.totalCartItems}`, 'Nombre d\'articles dans le panier')}
+              {kpiCard('Total HT', `${cartStats.totalCartHT} €`, 'Prix sans TVA')}
+              {kpiCard('Taxes (TVA)', `${cartStats.totalCartTaxes} €`, 'TVA à l\'impact')}
+              {kpiCard('Total TTC', `${cartStats.totalCartTTC} €`, 'Prix final', '#000', '#fff')}
             </div>
           </div>
         )}

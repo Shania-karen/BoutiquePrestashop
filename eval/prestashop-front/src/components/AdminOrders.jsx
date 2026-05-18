@@ -22,26 +22,42 @@ export default function AdminOrders() {
       setLoading(true);
       setError(null);
 
-      // 1. Récupérer les statuts de commande
+      // 1. Récupérer les statuts de commande (Filtrés pour nos 4 états + le statut 11)
       const statesData = await fetchPrestaData('order_states?display=full');
       const statesArray = statesData?.order_states?.order_state;
       const statesList = Array.isArray(statesArray) ? statesArray : (statesArray ? [statesArray] : []);
       
       const statesMap = {};
+      // Ajout du 11 (Paiement en attente/PayPal) qui sera traité comme "Payé"
+      const allowedStateIds = ['2', '5', '6', '11']; 
+
       statesList.forEach(state => {
-        const id = extractValue(state.id);
-        let name = 'Inconnu';
-        if (state.name?.language) {
-          const langObj = Array.isArray(state.name.language)
-            ? state.name.language.find(l => extractValue(l['@_id']) === '1') || state.name.language[0]
-            : state.name.language;
-          name = extractValue(langObj);
+        const id = String(extractValue(state.id));
+        
+        if (allowedStateIds.includes(id)) {
+          let name = 'Inconnu';
+          if (state.name?.language) {
+            const langObj = Array.isArray(state.name.language)
+              ? state.name.language.find(l => extractValue(l['@_id']) === '1') || state.name.language[0]
+              : state.name.language;
+            name = extractValue(langObj);
+          }
+          
+          // Renommer explicitement l'état 2 ET l'état 11 en "Payé"
+          if (id === '2' || id === '11') name = 'Payé';
+
+          statesMap[id] = {
+            name: name,
+            color: extractValue(state.color) || '#d3d3d3'
+          };
         }
-        statesMap[id] = {
-          name: name,
-          color: extractValue(state.color) || '#d3d3d3'
-        };
       });
+      
+      // Ajouter manuellement le statut virtuel "Dans le panier"
+      statesMap.cart_only = {
+        name: 'Dans le panier',
+        color: '#90a4ae'
+      };
       setOrderStates(statesMap);
 
       // 2. Récupérer tous les clients
@@ -87,10 +103,54 @@ export default function AdminOrders() {
       
       const ordersCartIds = new Set(ordersList.map(o => extractValue(o.id_cart)));
 
-      // Trier par date décroissante
-      ordersList.sort((a, b) => new Date(extractValue(b.date_add)) - new Date(extractValue(a.date_add)));
+      // 5. Récupérer les paniers non transformés en commande
+      const cartsData = await fetchPrestaData('carts?display=full', 0, 300);
+      const cartsArray = cartsData?.carts?.cart;
+      const cartsList = Array.isArray(cartsArray) ? cartsArray : (cartsArray ? [cartsArray] : []);
 
-      setOrders(ordersList);
+      const orphanCartRows = cartsList
+        .filter(cart => {
+          const cartId = extractValue(cart.id);
+          return cartId && !ordersCartIds.has(cartId);
+        })
+        .map(cart => {
+          const cartId = extractValue(cart.id);
+          const cartRows = cart.associations?.cart_rows?.cart_row;
+          const rows = Array.isArray(cartRows) ? cartRows : (cartRows ? [cartRows] : []);
+
+          let total = 0;
+          const normalizedRows = rows.map(row => {
+            const productId = extractValue(row.id_product);
+            const quantity = parseInt(extractValue(row.quantity) || 0, 10);
+            const unitPrice = Number(pMap[productId]?.price) || 0;
+            total += unitPrice * quantity;
+            return {
+              product_id: productId,
+              product_quantity: quantity
+            };
+          });
+
+          return {
+            id: `cart-${cartId}`,
+            reference: `PANIER-${cartId}`,
+            id_customer: extractValue(cart.id_customer),
+            total_paid: total.toFixed(2),
+            total_paid_tax_incl: total.toFixed(2),
+            total_paid_tax_excl: total.toFixed(2),
+            current_state: 'cart_only',
+            payment: 'Panier non commandé',
+            date_add: extractValue(cart.date_add),
+            _cartProducts: normalizedRows,
+            _isCartOnly: true,
+          };
+        });
+
+      const mergedRows = [...ordersList, ...orphanCartRows];
+
+      // Trier par date décroissante
+      mergedRows.sort((a, b) => new Date(extractValue(b.date_add)) - new Date(extractValue(a.date_add)));
+
+      setOrders(mergedRows);
     } catch (err) {
       console.error('Erreur chargement commandes:', err);
       setError('Erreur lors de la récupération des commandes');
@@ -122,9 +182,7 @@ export default function AdminOrders() {
     return luminance > 160 ? '#000000' : '#ffffff';
   };
 
-  // Extraire les lignes de produits d'une commande ou d'un panier
   const getOrderProducts = (order) => {
-    // Paniers orphelins
     if (order._cartProducts) {
       return order._cartProducts.map(cp => {
         const prod = productsMap[cp.product_id];
@@ -137,7 +195,6 @@ export default function AdminOrders() {
         };
       });
     }
-    // Commandes normales (order_rows)
     if (order.associations?.order_rows?.order_row) {
       let rows = order.associations.order_rows.order_row;
       if (!Array.isArray(rows)) rows = [rows];
@@ -193,12 +250,31 @@ export default function AdminOrders() {
                 const totalTTC = extractValue(order.total_paid_tax_incl) || totalPaid;
                 const totalHT = extractValue(order.total_paid_tax_excl) || totalPaid;
                 const stateId = extractValue(order.current_state);
-                const state = orderStates[stateId];
+                const isCartOnly = stateId === 'cart_only' || order._isCartOnly;
+                
+                const state = orderStates[stateId] || (isCartOnly ? orderStates.cart_only : { name: `Statut #${stateId}`, color: '#ccc' });
                 const date = new Date(extractValue(order.date_add));
                 const isNewCustomer = extractValue(order.id_customer) === '0' || !customer;
                 const paymentMethod = extractValue(order.payment) || 'N/A';
                 const isExpanded = expandedOrderId === orderId;
                 const products = isExpanded ? getOrderProducts(order) : [];
+
+                // --- MACHINE À ÉTATS STRICTE CÔTÉ RENDU ---
+                let stateOptions = [];
+                const currentStateIdStr = String(stateId);
+                
+                // Verrouillé si ce n'est NI "2" (Payé) NI "11" (Paiement alternatif/PayPal)
+                const isStateLocked = !['2', '11'].includes(currentStateIdStr); 
+
+                if (isCartOnly) {
+                  stateOptions = [['cart_only', orderStates.cart_only]];
+                } else if (['2', '11'].includes(currentStateIdStr)) {
+                  // Si payé (via statut 2 ou 11), l'admin peut basculer vers Livré (5) ou Annulé (6), ou garder le statut actuel
+                  stateOptions = Object.entries(orderStates).filter(([id]) => [currentStateIdStr, '5', '6'].includes(id));
+                } else {
+                  // Si livré ou annulé, l'affichage se fige sur l'état final
+                  stateOptions = [[currentStateIdStr, state]];
+                }
 
                 return (
                   <React.Fragment key={orderId}>
@@ -208,7 +284,7 @@ export default function AdminOrders() {
                       <td className="new-customer-cell">
                         {isNewCustomer ? <span className="badge-new">OUI</span> : <span className="badge-no">NON</span>}
                       </td>
-                      <td className="shipping-cell">À livrer</td>
+                      <td className="shipping-cell">{isCartOnly ? 'Dans le panier' : 'À livrer'}</td>
                       <td className="customer-cell">
                         {customer ? `${customer.firstname} ${customer.lastname}` : 'N/A'}
                       </td>
@@ -221,15 +297,17 @@ export default function AdminOrders() {
                           className="state-select"
                           value={stateId || '0'}
                           onChange={(e) => handleStateChange(orderId, e.target.value)}
-                          disabled={updatingOrderId === orderId || stateId === 'cart_only'}
+                          disabled={updatingOrderId === orderId || isCartOnly || isStateLocked}
                           style={{
                             backgroundColor: state?.color || '#f5f5f5',
                             color: getReadableTextColor(state?.color),
                             borderColor: state?.color || '#999999',
+                            cursor: (isCartOnly || isStateLocked) ? 'not-allowed' : 'pointer',
+                            opacity: (isCartOnly || isStateLocked) ? 0.8 : 1
                           }}
                         >
-                          {Object.entries(orderStates).map(([id, stateInfo]) => (
-                            <option key={id} value={id}>{stateInfo.name}</option>
+                          {stateOptions.map(([id, stateInfo]) => (
+                            <option key={id} value={id}>{stateInfo?.name}</option>
                           ))}
                         </select>
                       </td>
@@ -241,15 +319,14 @@ export default function AdminOrders() {
                       </td>
                     </tr>
 
-                    {/* --- DÉTAIL DE LA COMMANDE (style PrestaShop) --- */}
+                    {/* --- DÉTAIL DE LA COMMANDE --- */}
                     {isExpanded && (
                       <tr className="detail-row">
                         <td colSpan="10" style={{ padding: 0 }}>
                           <div className="order-detail-panel">
-                            {/* En-tête du détail */}
                             <div className="detail-header">
                               <div className="detail-header-left">
-                                <h3>Commande {reference}</h3>
+                                <h3>{isCartOnly ? 'Panier' : 'Commande'} {reference}</h3>
                                 <span className="detail-date">
                                   {date.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                                 </span>
@@ -262,7 +339,6 @@ export default function AdminOrders() {
                             </div>
 
                             <div className="detail-grid">
-                              {/* Colonne gauche : Produits */}
                               <div className="detail-section">
                                 <h4 className="detail-section-title">
                                   Produits ({products.length})
@@ -293,16 +369,13 @@ export default function AdminOrders() {
                                 </table>
                               </div>
 
-                              {/* Colonne droite : Récap */}
                               <div className="detail-section detail-summary">
-                                {/* Client */}
                                 <h4 className="detail-section-title">Client</h4>
                                 <div className="detail-info-block">
                                   <p><strong>{customer ? `${customer.firstname} ${customer.lastname}` : 'N/A'}</strong></p>
                                   <p style={{ color: '#666', fontSize: '0.85rem' }}>{customer?.email || ''}</p>
                                 </div>
 
-                                {/* Récapitulatif financier */}
                                 <h4 className="detail-section-title" style={{ marginTop: '20px' }}>Récapitulatif</h4>
                                 <div className="detail-info-block">
                                   <div className="detail-recap-row">
@@ -319,7 +392,6 @@ export default function AdminOrders() {
                                   </div>
                                 </div>
 
-                                {/* Paiement */}
                                 <h4 className="detail-section-title" style={{ marginTop: '20px' }}>Paiement</h4>
                                 <div className="detail-info-block">
                                   <p>Méthode : <strong>{paymentMethod}</strong></p>
