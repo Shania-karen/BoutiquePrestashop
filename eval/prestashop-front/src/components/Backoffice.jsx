@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import Dashboard from './Dashboard';
 import ProductList from './ProductList';
-import ResetDashboard from './ResetDashboard';
+import StatisticsPage from './StatisticsPage';
 import ImportExportManager from './ImportExportManager';
 import AdminOrders from './AdminOrders';
 import StockManager from './StockManager';
@@ -33,7 +33,8 @@ export default function Backoffice() {
         return <AdminOrders />;
       case 'stock':
         return <StockManager />;
-
+      case 'statistics':
+        return <StatisticsPage />;
       case 'dashboard':
         return <Dashboard />;
       case 'stockEvolution':
@@ -111,6 +112,12 @@ export default function Backoffice() {
               onClick={() => setCurrentView('categoryStock')}
             >
               Stocks par catégorie
+            </button>
+            <button
+              className={`nav-item ${currentView === 'statistics' ? 'active' : ''}`}
+              onClick={() => setCurrentView('statistics')}
+            >
+              Statistiques financières
             </button>
           </nav>
         </aside>

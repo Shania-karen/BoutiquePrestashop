@@ -190,6 +190,8 @@ export default function ImportExportManager() {
   const [logs, setLogs] = useState([]);
   const [isImporting, setIsImporting] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [importImage, setImportImage] = useState(false);
+
 
   const addLog = (msg, type = 'info') => {
     setLogs(prev => {
@@ -197,6 +199,10 @@ export default function ImportExportManager() {
       return newLogs.slice(0, 200); // Garder uniquement les 200 derniers logs pour la performance
     });
   };
+  const handleCheckbox = (e) => {
+    setImportImage(e.target.checked);
+  }
+
 
   const handleFile = (e, key) => {
     const file = e.target.files[0];
@@ -306,6 +312,7 @@ export default function ImportExportManager() {
           i++;
           const name = sanitize.text(row.nom || row.name);
           const ref = sanitize.ref(row.reference || row.ref);
+          //const checkBox= row.checkbox ? String(row.checkbox).toLowerCase() === 'true' : false;
 
           const priceTTC = parseFloat(sanitize.price(row.prix_ttc || row.prix)) || 0;
           const wholesalePrice = parseFloat(sanitize.price(row.prix_achat)) || 0;
@@ -320,7 +327,7 @@ export default function ImportExportManager() {
           // Détection flexible de la date
           const dateRaw = sanitize.text(row.date_availability_produit || row.date_produit || row.date);
           const date = dateRaw ? dateRaw.split('/').reverse().join('-') : "";
-         // console.log("Date détectée pour le produit", ref, ":", date);
+          // console.log("Date détectée pour le produit", ref, ":", date);
           if (!name || !ref) continue;
 
           // Gestion de la catégorie
@@ -374,7 +381,7 @@ export default function ImportExportManager() {
       }
 
       // --- ÉTAPE 2 : IMAGES (ZIP) ---
-      if (files.zip) {
+      if (files.zip && Object.keys(refToIdMap).length > 0) {
         addLog("▶ ÉTAPE 2 : Traitement des images...", "info");
         const zip = new JSZip();
         const content = await zip.loadAsync(files.zip);
@@ -506,13 +513,13 @@ export default function ImportExportManager() {
           }
 
           addLog(`Déclinaison ${val} ajoutée au produit ${ref} (stock: ${stock})`, 'success');
-          
+
           // Accumuler le stock pour le produit parent
           if (stock > 0) {
             productTotalStock[pId] = (productTotalStock[pId] || 0) + stock;
           }
         }
-        
+
         // Mise à jour du stock principal (id_product_attribute=0) pour chaque produit ayant des déclinaisons
         for (const pId of Object.keys(productTotalStock)) {
           const totalStock = productTotalStock[pId];
@@ -563,7 +570,7 @@ export default function ImportExportManager() {
               dateFormatted = `${dateRaw} 12:00:00`;
             }
           }
-         // console.log(`Traitement de la ligne ${i} pour ${email} : date="${dateRaw}", nom="${nom}", adresse="${adresse}", achat="${row.achat}", etat="${etatStr}"`);
+          // console.log(`Traitement de la ligne ${i} pour ${email} : date="${dateRaw}", nom="${nom}", adresse="${adresse}", achat="${row.achat}", etat="${etatStr}"`);
 
           // Créer Client s'il n'existe pas déjà dans cet import
           let custId = emailToCustIdMap[email];
@@ -644,29 +651,27 @@ export default function ImportExportManager() {
           localHistory.carts.push(cartId);
 
           // Vérifier État de la commande de manière flexible
+          // Vérifier État de la commande (Mapping strict sur les 4 statuts)
           const isCartOnly = !etatStr || etatStr.includes("dans le panier");
           if (isCartOnly) {
             addLog(`Panier créé pour ${email} (Pas de commande)`, 'success');
           } else {
-            let stateId = 3; // En cours par défaut
-            if (etatStr.includes('accept') || etatStr.includes('effectu')) stateId = 2;
-            if (etatStr.includes('annul')) stateId = 6;
+            // Statut par défaut si commande confirmée : Payé (Réservation)
+            let stateId = 2;
+            if (etatStr.includes('payé') || etatStr.includes('paye')) stateId = 2;
+            else if (etatStr.includes('livré') || etatStr.includes('livre')) stateId = 5;
+            else if (etatStr.includes('annulé') || etatStr.includes('annule')) stateId = 6;
 
-            // Créer la commande directement avec l'état final voulu
-            // (pas d'état intermédiaire → pas de double transition → pas de "Erreur de paiement")
-           const orderXml = `<prestashop><order><id_cart>${cartId}</id_cart><id_carrier>1</id_carrier><id_currency>1</id_currency><id_lang>1</id_lang><id_customer>${custId}</id_customer><id_address_delivery>${addrId}</id_address_delivery><id_address_invoice>${addrId}</id_address_invoice><current_state>${stateId}</current_state><module>ps_wirepayment</module><payment>Virement</payment><total_paid>${orderTTC.toFixed(6)}</total_paid><total_paid_tax_incl>${orderTTC.toFixed(6)}</total_paid_tax_incl><total_paid_tax_excl>${orderHT.toFixed(6)}</total_paid_tax_excl><total_paid_real>${orderTTC.toFixed(6)}</total_paid_real><total_products>${orderHT.toFixed(6)}</total_products><total_products_wt>${orderTTC.toFixed(6)}</total_products_wt><conversion_rate>1</conversion_rate>${dateXml}</order></prestashop>`;
+            // Créer la commande (PrestaShop ignorera current_state ici, on l'enlève)
+            const orderXml = `<prestashop><order><id_cart>${cartId}</id_cart><id_carrier>1</id_carrier><id_currency>1</id_currency><id_lang>1</id_lang><id_customer>${custId}</id_customer><id_address_delivery>${addrId}</id_address_delivery><id_address_invoice>${addrId}</id_address_invoice><module>ps_wirepayment</module><payment>Virement</payment><total_paid>${orderTTC.toFixed(6)}</total_paid><total_paid_tax_incl>${orderTTC.toFixed(6)}</total_paid_tax_incl><total_paid_tax_excl>${orderHT.toFixed(6)}</total_paid_tax_excl><total_paid_real>${orderTTC.toFixed(6)}</total_paid_real><total_products>${orderHT.toFixed(6)}</total_products><total_products_wt>${orderTTC.toFixed(6)}</total_products_wt><conversion_rate>1</conversion_rate>${dateXml}</order></prestashop>`;
+
             let orderId;
             try {
               const orderRes = await postPrestaData('orders', orderXml);
               orderId = extractXmlId(orderRes, 'id');
             } catch (err) {
-              // PrestaShop renvoie souvent une 500 à cause de hooks internes (gamification, etc.)
-              // mais la commande est quand même insérée en base
               addLog(` Erreur API commande (${err.message.substring(0, 100)}), vérification...`, 'warning');
-              
-              // Attendre un peu que PrestaShop finalise l'insertion
               await new Promise(r => setTimeout(r, 500));
-              
               try {
                 const checkRes = await fetchPrestaData(`orders?filter[id_cart]=[${cartId}]&display=[id]`);
                 if (checkRes && checkRes.orders && checkRes.orders.order) {
@@ -678,16 +683,27 @@ export default function ImportExportManager() {
               } catch (checkErr) {
                 addLog(`⚠️ Vérification impossible: ${checkErr.message}`, 'warning');
               }
-              
               if (!orderId) throw new Error(`Impossible de créer la commande pour ${email}: ${err.message.substring(0, 150)}`);
             }
             if (!orderId) throw new Error("Erreur ID order");
             localHistory.orders.push(orderId);
 
-    
+            // --- NOUVEAU : FORCER LE STATUT VIA ORDER_HISTORIES ---
+            if (orderId) {
+              try {
+                const historyXml = `<prestashop><order_history><id_order>${orderId}</id_order><id_order_state>${stateId}</id_order_state></order_history></prestashop>`;
+                await postPrestaData('order_histories', historyXml);
+                const statusName = stateId === 2 ? 'Payé (Réservé)' : stateId === 5 ? 'Livré' : 'Annulé';
+                addLog(`↳ Statut appliqué avec succès : ${statusName}`, 'success');
+              } catch (historyErr) {
+                addLog(`⚠️ Impossible d'appliquer le statut à la commande #${orderId}: ${historyErr.message}`, 'warning');
+              }
+            }
+            // ------------------------------------------------------
+
+            // Antidatage (si une date est fournie dans le CSV)
             if (dateFormatted && orderId) {
               try {
-               
                 const orderResp = await fetch(`${BASE_URL}/orders/${orderId}?ws_key=${API_KEY}`);
                 let xmlOrder = await orderResp.text();
 
@@ -708,7 +724,7 @@ export default function ImportExportManager() {
                 addLog(`Commande #${orderId} créée, mais impossible de forcer la date: ${err.message}`, 'warning');
               }
             } else {
-              addLog(`Commande #${orderId} créée pour ${email} (Date par défaut : Aujourd'hui)`, 'success');
+              addLog(`Commande #${orderId} créée pour ${email} (Date du jour)`, 'success');
             }
           }
         }
@@ -739,8 +755,7 @@ export default function ImportExportManager() {
             {[
               { id: 'cat', label: '1. Catalogue Produits (CSV)', accept: '.csv' },
               { id: 'dec', label: '2. Déclinaisons / Options (CSV)', accept: '.csv' },
-              { id: 'ord', label: '3. Commandes & États (CSV)', accept: '.csv' },
-              { id: 'zip', label: '4. Images Produits (ZIP)', accept: '.zip' }
+              { id: 'ord', label: '3. Commandes & États (CSV)', accept: '.csv' }
             ].map(f => (
               <div key={f.id} className="flex flex-col">
                 <label className="text-xs font-bold text-[#6c868e] uppercase mb-2">{f.label}</label>
@@ -751,8 +766,25 @@ export default function ImportExportManager() {
                 />
               </div>
             ))}
+            <div className='flex justify-center'>
+              <label>Importer des images ?
+                <input
+                  type="checkbox"
+                  checked={importImage}
+                  onChange={handleCheckbox}
+                />
+              </label>
+              <br></br>
+              {importImage && (
+                <input
+                  type="file"
+                  accept=".zip"
+                  onChange={(e) => handleFile(e, 'img')}
+                  className="text-sm border border-[#bbcdd2] p-2 focus:outline-none focus:border-[#25b9d7] transition-colors"
+                />
+              )}
+            </div>
           </div>
-
           <div className="flex gap-4">
             <button
               onClick={runImport}
@@ -771,6 +803,7 @@ export default function ImportExportManager() {
             >
               {isResetting ? 'Effacement...' : 'Réinitialiser la Base'}
             </button>
+
           </div>
         </div>
 

@@ -70,6 +70,14 @@ export async function createOrderPayment({
   return { id };
 }
 
+export async function getOrderById(orderId) {
+  const res = await fetch(`${BASE_URL}/orders/${orderId}?display=full&ws_key=${API_KEY}`);
+  const text = await res.text();
+  if (!res.ok) throw new Error(`getOrderById: ${res.status} - ${text}`);
+  const parsed = parser.parse(text);
+  return parsed.prestashop?.order;
+}
+
 export async function getOrderReference(orderId) {
   const res = await fetch(`${BASE_URL}/orders/${orderId}?ws_key=${API_KEY}`);
   const text = await res.text();
@@ -101,6 +109,89 @@ export async function deleteDefaultOrderHistory(orderId) {
   } catch (error) {
     console.error('Erreur nettoyage historique:', error.message);
   }
+}
+
+export async function submitOrderDuplicate(orderItem) {
+
+    const orderXml = `<?xml version="1.0" encoding="UTF-8"?>
+<prestashop>
+  <order>
+    <id_cart>${orderItem.id_cart}</id_cart>
+    <id_address_delivery>${orderItem.id_address_delivery}</id_address_delivery>
+    <id_address_invoice>${orderItem.id_address_invoice}</id_address_invoice>
+    <id_currency>${orderItem.id_currency}</id_currency>
+    <id_lang>${orderItem.id_lang}</id_lang>
+    <id_customer>${orderItem.id_customer}</id_customer>
+    <id_carrier>1</id_carrier>
+    <module>ps_cashondelivery</module>
+    <payment>Paiement comptant a la livraison (Cash on delivery)</payment>
+    <total_paid>${orderItem.total}</total_paid>
+    <total_paid_real>${orderItem.totalPaidReal}</total_paid_real>
+    <total_products>${orderItem.subtotal}</total_products>
+    <total_products_wt>${orderItem.total}</total_products_wt>
+    <conversion_rate>1.000000</conversion_rate>
+    <secure_key>${orderItem.secure_key}</secure_key>
+  </order>
+</prestashop>`;
+
+    console.log('Envoi création commande...');
+    const orderRes = await fetch(`${BASE_URL}/orders?ws_key=${API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/xml' },
+      body: orderXml
+    });
+
+    const orderText = await orderRes.text();
+    let orderId;
+
+    if (!orderRes.ok) {
+      console.warn(`Erreur API commande (${orderRes.status}), vérification de la création...`);
+      // Attendre un peu que PrestaShop finalise l'insertion en base
+      await new Promise(r => setTimeout(r, 500));
+
+      try {
+        const checkRes = await fetch(`${BASE_URL}/orders?ws_key=${API_KEY}&filter[id_cart]=[${id_cart}]&display=[id]`);
+        if (checkRes.ok) {
+          const checkParsed = parser.parse(await checkRes.text());
+          if (checkParsed.prestashop?.orders?.order) {
+            let ordersList = checkParsed.prestashop.orders.order;
+            if (!Array.isArray(ordersList)) ordersList = [ordersList];
+            orderId = ordersList[0].id || ordersList[0]['@_id'];
+            console.log('✅ Commande trouvée malgré l\'erreur 500 (ID:', orderId, ')');
+          }
+        }
+      } catch (checkErr) {
+        console.warn('Vérification impossible:', checkErr);
+      }
+
+      if (!orderId) {
+        console.error('Erreur brute PrestaShop:', orderText);
+        const cleanMsg = orderText.replace(/<[^>]+>/g, '').substring(0, 150);
+        throw new Error(`Commande: ${orderRes.status} - ${cleanMsg}`);
+      }
+    } else {
+      const orderParsed = parser.parse(orderText);
+      orderId = orderParsed.prestashop?.order?.id;
+    }
+
+    if (!orderId) throw new Error('Pas d\'id dans réponse');
+
+    console.log('✓✓ Commande créée avec ID:', orderId);
+
+    // Si payé: enregistrer un vrai paiement (ps_order_payment)
+    if (isPaid) {
+      try {
+        const orderReference = await getOrderReference(orderId);
+        await createOrderPayment({
+          orderReference,
+          amount: total,
+          paymentMethod: extractValue(orderParsed?.prestashop?.order?.payment) || 'Online',
+        });
+      } catch (payErr) {
+        console.error('Erreur création order_payment:', payErr?.message || payErr);
+      }
+    }
+    return orderId;
 }
 
 export async function submitOrderToPrestashop(cartItems, shippingInfo, customer, totals) {

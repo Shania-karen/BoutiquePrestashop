@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+    <name>monapicustom</name>
+    <displayName><![CDATA[API Sur-mesure - Statut Commande]]></displayName>
+    <version><![CDATA[1.0.0]]></version>
+    <description><![CDATA[Ajoute un endpoint API natif pour changer les statuts avec logique m&eacute;tier (stock, email).]]></description>
+    <author><![CDATA[Mahery]]></author>
+    <tab><![CDATA[administration]]></tab>
+    <is_configurable>0</is_configurable>
+    <need_instance>0</need_instance>
+</module>

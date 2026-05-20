@@ -1,15 +1,35 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, use } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { fetchPrestaData, extractValue } from '../services/apiClient';
 import '../assets/css/OrderList.css';
+import { getOrderById , submitOrderDuplicate} from '../services/orderService';
 
 export default function OrderList() {
   const { user, isAuthenticated } = useAuth();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-
+  const [ duplicateCommande , setDuplicateCommande ] = useState(false);
+  const[ nombreDUplication , setNombreDublication] = useState(0);
+ // const [orderStatus, setOrderStatus] = useState(null);
+  const handleDuplicate = async (ordersData) => {
+   // ordersData = 3;
+        if(duplicateCommande){
+          // setOrderStatus("success");
+          try {
+            const duplicateOrder = await getOrderById(ordersData.orderId);
+            const duplicateOrders= await submitOrderDuplicate(duplicateOrder);
+            setDuplicateCommande(duplicateOrders);
+            setNombreDublication(nombreDUplication + 1);
+          }
+          catch (error) { console.error("Erreur lors de la duplication de la commande :", error);
+           // setOrderStatus("error");
+          }
+        }else{
+          //setOrderStatus("error");
+        }
+    };
   // État pour gérer l'accordéon
   const [expandedOrder, setExpandedOrder] = useState(null);
 
@@ -46,6 +66,11 @@ export default function OrderList() {
         const allOrdersList = Array.isArray(oArray) ? oArray : [oArray];
         const userOrders = allOrdersList.filter(o => extractValue(o.id_customer) === String(user.id));
         
+        //recuperer liste des produits pour les dupliquer dans le panier
+        const ordersDataByline=await getOrderById(userOrders[0].id);
+        console.log("ordersDataByline", ordersDataByline);
+        setDuplicateCommande(ordersDataByline);
+
         let combinedItems = [];
 
         // Traitement des commandes selon la machine à états
@@ -129,6 +154,10 @@ export default function OrderList() {
                     <span className="order-ref">Référence : <strong>{item.ref}</strong></span>
                     <span className="order-date">{formatDate(item.date)}</span>
                   </div>
+                  <div classname="order-info-main">
+                    <span className="order-ref">ID : <strong>{item.id}</strong></span>
+                    <span className="order-date">{formatDate(item.date)}</span>
+                    </div>
                   
                   <div className="order-info-side">
                     <span className="order-total">{item.total} €</span>
@@ -155,8 +184,18 @@ export default function OrderList() {
                             <span className="product-qty">{prod.qty}x</span>
                             <span className="product-name">{prod.name}</span>
                             <span className="product-price">{prod.price} €</span>
+                          
                           </div>
                         ))}
+                            <button 
+                            onClick={ () => handleDuplicate({
+                              orderId: item.id.replace('order_', '')
+                            })}
+                            title="Dupliquer cette commande dans le panier"
+                            className="duplicate-btn"
+                            >
+                              Dupliquer
+                            </button>
                       </div>
                     </div>
                   </div>

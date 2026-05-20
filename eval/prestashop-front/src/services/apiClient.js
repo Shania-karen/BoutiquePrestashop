@@ -74,3 +74,17 @@ export async function deletePrestaItem(resourcePath, id) {
   }
   return true;
 }
+
+export async function fetchPrestaDataJSON(resourcePath) {
+  const separator = resourcePath.includes('?') ? '&' : '?';
+  const url = `${BASE_URL}/${resourcePath}${separator}ws_key=${API_KEY}&output_format=JSON`;
+  
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Erreur API: statut ${response.status}`);
+    return await response.json(); // On parse directement en JSON natif
+  } catch (error) {
+    console.error(`Erreur GET sur ${resourcePath}:`, error);
+    throw error;
+  }
+}
