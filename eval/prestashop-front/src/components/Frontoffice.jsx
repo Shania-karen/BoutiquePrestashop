@@ -5,11 +5,12 @@ import { useNavigate } from 'react-router-dom';
 
 import { fetchPrestaData, extractValue } from '../services/apiClient';
 import { getProductImageUrl, fetchTaxRate, fetchProductReduction } from '../services/productservice';
+import GestionUpdateStock from './GestionUpdateStock';
 import '../assets/css/Frontoffice.css';
 
 
 export default function Frontoffice() {
-  const { user, logout, isAuthenticated } = useAuth();
+  const { user, logout, isAuthenticated, isAdmin } = useAuth();
   const { addToCart, totalItems } = useCart();
   const navigate = useNavigate();
 
@@ -31,6 +32,7 @@ export default function Frontoffice() {
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(null);
   const [addedId, setAddedId]     = useState(null); // ID du dernier produit ajouté (feedback visuel)
+  const [showStockManager, setShowStockManager] = useState(false);
 
   const [searchName, setSearchName] = useState('');
   const [searchCategory, setSearchCategory] = useState('');
@@ -267,6 +269,34 @@ export default function Frontoffice() {
             </div>
           )}
 
+          {/* Bouton Gestion des Stocks - Visible par tous, mais protégé au clic */}
+          <button
+            style={{
+              padding: '8px 12px',
+              marginRight: '10px',
+              background: '#000',
+              color: '#fff',
+              border: '1px solid #333',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              fontSize: '13px'
+            }}
+            onClick={() => {
+              if (isAdmin) {
+                setShowStockManager(true);
+              } else {
+                if (isAuthenticated) {
+                  alert("Accès réservé aux administrateurs. Veuillez vous reconnecter avec un compte Admin.");
+                }
+                redirectToLogin();
+              }
+            }}
+            title="Gérer les stocks par catégorie"
+          >
+            ⚙️ Gestion Stocks (Admin)
+          </button>
+
           {/* Bouton panier avec badge */}
           <button
             className="btn-cart-header"
@@ -313,8 +343,11 @@ export default function Frontoffice() {
       {/* ── Contenu ──────────────────────────────────────────────────────── */}
       <div className="frontoffice-container">
         <main className="frontoffice-content">
-
-          <div className="welcome-section">
+          {showStockManager ? (
+            <GestionUpdateStock onClose={() => setShowStockManager(false)} />
+          ) : (
+            <>
+              <div className="welcome-section">
             <h2>Bienvenue sur notre boutique</h2>
             {isAuthenticated ? (
               <p>Connecté en tant que : <strong>{user?.email}</strong></p>
@@ -524,6 +557,8 @@ export default function Frontoffice() {
               );
             })()}
           </section>
+          </>
+          )}
         </main>
       </div>
     </div>

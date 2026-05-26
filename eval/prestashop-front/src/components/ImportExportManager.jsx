@@ -13,7 +13,24 @@ const sanitize = {
   },
   text: (val) => String(val || '').trim().replace(/\s+/g, ' '),
   ref: (val) => String(val || '').trim()
-  // ref: (val) => String(val || '').trim().replace(/-/g,'_')
+};
+
+const getRowVal = (row, possibleKeys) => {
+  if (!row) return undefined;
+  const keys = Object.keys(row);
+  for (const pKey of possibleKeys) {
+    const target = pKey.toLowerCase();
+    const foundKey = keys.find(k => k.replace(/^\uFEFF/, '').trim().toLowerCase() === target);
+    if (foundKey && row[foundKey] !== undefined) return row[foundKey];
+  }
+  return undefined;
+};
+
+const processInBatches = async (items, batchSize, asyncProcessor) => {
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    await Promise.all(batch.map(asyncProcessor));
+  }
 };
 
 // --- COLONNES ATTENDUES PAR FICHIER (en minuscules pour comparaison insensible à la casse) ---
@@ -222,16 +239,21 @@ export default function ImportExportManager() {
   };
 
   const rollback = async (history) => {
-    addLog(" DÉBUT DU ROLLBACK : Annulation des insertions...", "error");
+    addLog(" DÉBUT DU ROLLBACK : Annulation des insertions en parallèle...", "error");
     try {
-      for (const id of history.orders.reverse()) await deletePrestaData('orders', id).catch(e => null);
-      for (const id of history.carts.reverse()) await deletePrestaData('carts', id).catch(e => null);
-      for (const id of history.addresses.reverse()) await deletePrestaData('addresses', id).catch(e => null);
-      for (const id of history.customers.reverse()) await deletePrestaData('customers', id).catch(e => null);
-      for (const id of history.combinations.reverse()) await deletePrestaData('combinations', id).catch(e => null);
-      for (const id of history.product_option_values.reverse()) await deletePrestaData('product_option_values', id).catch(e => null);
-      for (const id of history.product_options.reverse()) await deletePrestaData('product_options', id).catch(e => null);
-      for (const id of history.products.reverse()) await deletePrestaData('products', id).catch(e => null);
+      const deleteBatch = async (resource, ids) => {
+        await processInBatches(ids, 10, id => deletePrestaData(resource, id).catch(e => null));
+      };
+      
+      await deleteBatch('orders', history.orders.reverse());
+      await deleteBatch('carts', history.carts.reverse());
+      await deleteBatch('addresses', history.addresses.reverse());
+      await deleteBatch('customers', history.customers.reverse());
+      await deleteBatch('combinations', history.combinations.reverse());
+      await deleteBatch('product_option_values', history.product_option_values.reverse());
+      await deleteBatch('product_options', history.product_options.reverse());
+      await deleteBatch('products', history.products.reverse());
+      
       addLog(" ROLLBACK TERMINÉ. La base a été nettoyée des données de cet import partiel.", "info");
     } catch (e) {
       addLog("Erreur critique lors du rollback manuel.", "error");
@@ -304,36 +326,20 @@ export default function ImportExportManager() {
     const valToValIdMap = {}; // "optId_valName" -> product_option_value ID
 
     try {
-      // --- ÉTAPE 1 : PRODUITS (fichier 1) ---
+      // --- ÉTAPE 1 : PRODUITS & CATÉGORIES (fichier 1) ---
       if (files.cat) {
-        addLog("▶ ÉTAPE 1 : Importation des produits...", "info");
-        let i = 0;
+        addLog(`▶ ÉTAPE 1 : Création des produits (${files.cat.length} lignes)...`, "info");
+        
+        // 1.1 Création séquentielle des catégories uniques pour éviter les conflits
+        const uniqueCategories = [];
         for (const row of files.cat) {
-          i++;
-          const name = sanitize.text(row.nom || row.name);
-          const ref = sanitize.ref(row.reference || row.ref);
-          //const checkBox= row.checkbox ? String(row.checkbox).toLowerCase() === 'true' : false;
-
-          const priceTTC = parseFloat(sanitize.price(row.prix_ttc || row.prix)) || 0;
-          const wholesalePrice = parseFloat(sanitize.price(row.prix_achat)) || 0;
-
-          let taxRate = 0;
-          const taxRaw = row.Taxe || row.taxe || row.tax;
-          if (taxRaw) {
-            taxRate = parseFloat(taxRaw.replace(',', '.').replace('%', ''));
+          const catName = sanitize.text(getRowVal(row, ['categorie', 'category']));
+          if (catName && !uniqueCategories.includes(catName)) {
+            uniqueCategories.push(catName);
           }
-          // Produit stocké en TTC, taux de taxe dans ecotax pour calcul HT côté Dashboard
+        }
 
-          // Détection flexible de la date
-          const dateRaw = sanitize.text(row.date_availability_produit || row.date_produit || row.date);
-          const date = dateRaw ? dateRaw.split('/').reverse().join('-') : "";
-          // console.log("Date détectée pour le produit", ref, ":", date);
-          if (!name || !ref) continue;
-
-          // Gestion de la catégorie
-          let catId = 2; // Accueil par défaut
-          const catNameRaw = sanitize.text(row.categorie || row.category);
-          if (catNameRaw) {
+        for (const catNameRaw of uniqueCategories) {
             const catName = catNameRaw.toLowerCase();
             if (!catToIdMap[catName]) {
               const catLink = catName.replace(/[^a-z0-9]/g, '-');
@@ -349,10 +355,35 @@ export default function ImportExportManager() {
                 // Ignore et garde la catégorie par défaut
               }
             }
-            if (catToIdMap[catName]) catId = catToIdMap[catName];
+        }
+
+        // 1.2 Création des produits par lots
+        await processInBatches(files.cat, 10, async (row) => {
+          const name = sanitize.text(getRowVal(row, ['nom', 'name']));
+          const ref = sanitize.ref(getRowVal(row, ['reference', 'ref']));
+
+          const rawPrice = getRowVal(row, ['prix_ttc', 'prix']);
+          const rawWholesale = getRowVal(row, ['prix_achat']);
+          const priceTTC = parseFloat(sanitize.price(rawPrice)) || 0;
+          const wholesalePrice = parseFloat(sanitize.price(rawWholesale)) || 0;
+
+          let taxRate = 0;
+          const taxRaw = getRowVal(row, ['taxe', 'tax']);
+          if (taxRaw) {
+            taxRate = parseFloat(taxRaw.replace(',', '.').replace('%', ''));
           }
 
-          // Création du produit : prix = TTC, supplier_reference = taux de taxe
+          const dateRaw = sanitize.text(getRowVal(row, ['date_availability_produit', 'date_produit', 'date']));
+          const date = dateRaw ? dateRaw.split('/').reverse().join('-') : "";
+          
+          if (!name || !ref) return;
+
+          let catId = 2; // Accueil par défaut
+          const catNameRaw = sanitize.text(getRowVal(row, ['categorie', 'category']));
+          if (catNameRaw && catToIdMap[catNameRaw.toLowerCase()]) {
+            catId = catToIdMap[catNameRaw.toLowerCase()];
+          }
+
           const xml = `
             <prestashop>
               <product>
@@ -377,7 +408,7 @@ export default function ImportExportManager() {
           refToIdMap[ref] = id;
           localHistory.products.push(id);
           addLog(`Produit créé : ${name} (${ref}) -> ID ${id}`, 'success');
-        }
+        });
       }
 
       // --- ÉTAPE 2 : IMAGES (ZIP) ---
@@ -398,27 +429,66 @@ export default function ImportExportManager() {
       // --- ÉTAPE 3 : DÉCLINAISONS (fichier 2) ---
       if (files.dec) {
         addLog(`▶ ÉTAPE 3 : Création des déclinaisons & stock (${files.dec.length} lignes)...`, "info");
-        let i = 0;
         const productTotalStock = {}; // pId -> total stock des déclinaisons
+
+        // 3.1 Création séquentielle des options et valeurs pour éviter les doublons simultanés
+        const uniqueSpecsVals = [];
         for (const row of files.dec) {
-          i++;
-          const ref = sanitize.ref(row.reference);
+           const specKey = Object.keys(row).find(k => k.replace(/^\uFEFF/, '').trim().toLowerCase().startsWith('specifi'));
+           const spec = specKey ? sanitize.text(row[specKey]) : "";
+           const val = sanitize.text(getRowVal(row, ['karazany', 'valeur']));
+           if (spec && val && !uniqueSpecsVals.find(s => s.spec === spec && s.val === val)) {
+             uniqueSpecsVals.push({ spec, val });
+           }
+        }
+        
+        for (const { spec, val } of uniqueSpecsVals) {
+           const specCacheKey = spec.toLowerCase();
+           let optId = specToOptIdMap[specCacheKey];
+           if (!optId) {
+             const optXml = `<prestashop><product_option><is_color_group>0</is_color_group><group_type>select</group_type><name><language id="1">${spec}</language></name><public_name><language id="1">${spec}</language></public_name></product_option></prestashop>`;
+             const optRes = await postPrestaData('product_options', optXml);
+             optId = extractXmlId(optRes, 'id');
+             if (!optId) throw new Error("Erreur ID product_option");
+             localHistory.product_options.push(optId);
+             specToOptIdMap[specCacheKey] = optId;
+           }
+
+           const valKey = `${optId}_${val.toLowerCase()}`;
+           let valId = valToValIdMap[valKey];
+           if (!valId) {
+             const valXml = `<prestashop><product_option_value><id_attribute_group>${optId}</id_attribute_group><name><language id="1">${val}</language></name></product_option_value></prestashop>`;
+             const valRes = await postPrestaData('product_option_values', valXml);
+             valId = extractXmlId(valRes, 'id');
+             if (!valId) throw new Error("Erreur ID product_option_value");
+             localHistory.product_option_values.push(valId);
+             valToValIdMap[valKey] = valId;
+           }
+        }
+
+        // 3.2 Création des combinaisons par lots
+        await processInBatches(files.dec, 10, async (row) => {
+          const ref = sanitize.ref(getRowVal(row, ['reference', 'ref']));
           const pId = refToIdMap[ref];
 
-          // Recherche flexible de la clé "specificité"
-          const specKey = Object.keys(row).find(k => k.toLowerCase().startsWith('specifi'));
+          const specKey = Object.keys(row).find(k => k.replace(/^\uFEFF/, '').trim().toLowerCase().startsWith('specifi'));
           const spec = specKey ? sanitize.text(row[specKey]) : "";
-          const val = sanitize.text(row.karazany || row.valeur);
-          const stock = parseInt(row.stock_initial) || 0;
-          const decPriceTTC = row.prix_vente_ttc ? parseFloat(sanitize.price(row.prix_vente_ttc)) : null;
+          const val = sanitize.text(getRowVal(row, ['karazany', 'valeur']));
+          const stock = parseInt(getRowVal(row, ['stock_initial'])) || 0;
+          const rawPrice = getRowVal(row, ['prix_vente_ttc']);
+          const decPriceTTC = rawPrice ? parseFloat(sanitize.price(rawPrice)) : null;
 
-          // Impact de prix = différence TTC entre la déclinaison et le produit parent
           let impactPrice = 0;
           if (decPriceTTC !== null && files.cat) {
-            const parentRow = files.cat.find(r => sanitize.ref(r.reference || r.ref) === ref);
+            const parentRow = files.cat.find(r => sanitize.ref(getRowVal(r, ['reference', 'ref'])) === ref);
             if (parentRow) {
-              const parentTTC = parseFloat(sanitize.price(parentRow.prix_ttc || parentRow.prix)) || 0;
-              impactPrice = decPriceTTC - parentTTC;
+              const rawTax = getRowVal(parentRow, ['taxe', 'tax']);
+              const taxRate = rawTax ? parseFloat(rawTax.replace(',', '.').replace('%', '')) : 0;
+              const parentTTC = parseFloat(sanitize.price(getRowVal(parentRow, ['prix_ttc', 'prix']))) || 0;
+              
+              const decPriceHT = decPriceTTC / (1 + (taxRate / 100));
+              const parentHT = parentTTC / (1 + (taxRate / 100));
+              impactPrice = decPriceHT - parentHT;
             }
           }
 
@@ -427,7 +497,6 @@ export default function ImportExportManager() {
           }
 
           if (!spec || !val) {
-            // Pas de déclinaison mais un stock_initial → mettre à jour le stock principal du produit
             if (stock > 0 && pId) {
               try {
                 const stockData = await fetchPrestaData(`stock_availables?filter[id_product]=[${pId}]&filter[id_product_attribute]=[0]&display=full`);
@@ -452,32 +521,11 @@ export default function ImportExportManager() {
               }
             }
             addLog(`Aucune déclinaison spécifiée pour le produit ${ref}, ignoré`, 'info');
-            continue;
+            return;
           }
 
-          // Créons l'option (groupe d'attributs) seulement si elle n'existe pas déjà
-          const specCacheKey = spec.toLowerCase();
-          let optId = specToOptIdMap[specCacheKey];
-          if (!optId) {
-            const optXml = `<prestashop><product_option><is_color_group>0</is_color_group><group_type>select</group_type><name><language id="1">${spec}</language></name><public_name><language id="1">${spec}</language></public_name></product_option></prestashop>`;
-            const optRes = await postPrestaData('product_options', optXml);
-            optId = extractXmlId(optRes, 'id');
-            if (!optId) throw new Error("Erreur ID product_option");
-            localHistory.product_options.push(optId);
-            specToOptIdMap[specCacheKey] = optId;
-          }
-
-          // Créons la valeur d'attribut seulement si elle n'existe pas déjà dans ce groupe
-          const valKey = `${optId}_${val.toLowerCase()}`;
-          let valId = valToValIdMap[valKey];
-          if (!valId) {
-            const valXml = `<prestashop><product_option_value><id_attribute_group>${optId}</id_attribute_group><name><language id="1">${val}</language></name></product_option_value></prestashop>`;
-            const valRes = await postPrestaData('product_option_values', valXml);
-            valId = extractXmlId(valRes, 'id');
-            if (!valId) throw new Error("Erreur ID product_option_value");
-            localHistory.product_option_values.push(valId);
-            valToValIdMap[valKey] = valId;
-          }
+          const optId = specToOptIdMap[spec.toLowerCase()];
+          const valId = valToValIdMap[`${optId}_${val.toLowerCase()}`];
 
           const combXml = `<prestashop><combination><id_product>${pId}</id_product><reference>${ref}_${val}</reference><price>${impactPrice.toFixed(6)}</price><minimal_quantity>1</minimal_quantity><associations><product_option_values><product_option_value><id>${valId}</id></product_option_value></product_option_values></associations></combination></prestashop>`;
           const combRes = await postPrestaData('combinations', combXml);
@@ -487,10 +535,8 @@ export default function ImportExportManager() {
 
           refToCombMap[`${ref}_${val}`] = combId;
 
-          // --- INITIALISATION DU STOCK DE LA DÉCLINAISON ---
           if (stock > 0) {
             try {
-              // Attendre un peu que PrestaShop crée l'entrée stock_available
               const stockData = await fetchPrestaData(`stock_availables?filter[id_product]=[${pId}]&filter[id_product_attribute]=[${combId}]&display=full`);
               let stockItems = stockData?.stock_availables?.stock_available;
               if (stockItems) {
@@ -514,14 +560,13 @@ export default function ImportExportManager() {
 
           addLog(`Déclinaison ${val} ajoutée au produit ${ref} (stock: ${stock})`, 'success');
 
-          // Accumuler le stock pour le produit parent
           if (stock > 0) {
             productTotalStock[pId] = (productTotalStock[pId] || 0) + stock;
           }
-        }
+        });
 
-        // Mise à jour du stock principal (id_product_attribute=0) pour chaque produit ayant des déclinaisons
-        for (const pId of Object.keys(productTotalStock)) {
+        // 3.3 Mise à jour du stock principal en lots
+        await processInBatches(Object.keys(productTotalStock), 10, async (pId) => {
           const totalStock = productTotalStock[pId];
           try {
             const stockData = await fetchPrestaData(`stock_availables?filter[id_product]=[${pId}]&filter[id_product_attribute]=[0]&display=full`);
@@ -544,23 +589,52 @@ export default function ImportExportManager() {
           } catch (e) {
             console.warn(`Erreur maj stock global pour produit ${pId}:`, e);
           }
-        }
+        });
       }
 
       // --- ÉTAPE 4 : COMMANDES (fichier 3) ---
       if (files.ord) {
         addLog(`▶ ÉTAPE 4 : Importation des commandes & paniers (${files.ord.length} lignes)...`, "info");
-        let i = 0;
         const emailToCustIdMap = {};
         const emailToAddrIdMap = {};
 
+        // 4.1 Extraire et créer les clients et adresses séquentiellement pour éviter les doublons
+        const uniqueCustomers = [];
         for (const row of files.ord) {
-          i++;
-          const email = sanitize.text(row.email);
-          const nom = sanitize.text(row.nom);
-          const adresse = sanitize.text(row.adresse);
-          const etatStr = sanitize.text(row.etat).toLowerCase();
-          const dateRaw = sanitize.text(row.date);
+           const email = sanitize.text(getRowVal(row, ['email']));
+           if (email && !uniqueCustomers.find(c => c.email === email)) {
+              uniqueCustomers.push({ email, nom: sanitize.text(getRowVal(row, ['nom'])), adresse: sanitize.text(getRowVal(row, ['adresse'])) });
+           }
+        }
+        for (const cust of uniqueCustomers) {
+           let custId = emailToCustIdMap[cust.email];
+           if (!custId) {
+             const custXml = `<prestashop><customer><passwd>pass1234</passwd><lastname>${cust.nom}</lastname><firstname>Client</firstname><email>${cust.email}</email><active>1</active></customer></prestashop>`;
+             const custRes = await postPrestaData('customers', custXml);
+             custId = extractXmlId(custRes, 'id');
+             if (!custId) throw new Error("Erreur ID customer");
+             localHistory.customers.push(custId);
+             emailToCustIdMap[cust.email] = custId;
+           }
+
+           let addrId = emailToAddrIdMap[cust.email];
+           if (!addrId) {
+             const addrXml = `<prestashop><address><id_customer>${custId}</id_customer><id_country>8</id_country><alias>Maison</alias><lastname>${cust.nom}</lastname><firstname>Client</firstname><address1>${cust.adresse}</address1><city>Ville</city></address></prestashop>`;
+             const addrRes = await postPrestaData('addresses', addrXml);
+             addrId = extractXmlId(addrRes, 'id');
+             if (!addrId) throw new Error("Erreur ID address");
+             localHistory.addresses.push(addrId);
+             emailToAddrIdMap[cust.email] = addrId;
+           }
+        }
+
+        // 4.2 Créer commandes et paniers par lots
+        await processInBatches(files.ord, 5, async (row) => {
+          const email = sanitize.text(getRowVal(row, ['email']));
+          const nom = sanitize.text(getRowVal(row, ['nom']));
+          const adresse = sanitize.text(getRowVal(row, ['adresse']));
+          const etatStr = sanitize.text(getRowVal(row, ['etat'])).toLowerCase();
+          const dateRaw = sanitize.text(getRowVal(row, ['date']));
           let dateFormatted = "";
           if (dateRaw) {
             const parts = dateRaw.split('/');
@@ -570,37 +644,19 @@ export default function ImportExportManager() {
               dateFormatted = `${dateRaw} 12:00:00`;
             }
           }
-          // console.log(`Traitement de la ligne ${i} pour ${email} : date="${dateRaw}", nom="${nom}", adresse="${adresse}", achat="${row.achat}", etat="${etatStr}"`);
 
-          // Créer Client s'il n'existe pas déjà dans cet import
-          let custId = emailToCustIdMap[email];
-          if (!custId) {
-            const custXml = `<prestashop><customer><passwd>pass1234</passwd><lastname>${nom}</lastname><firstname>Client</firstname><email>${email}</email><active>1</active></customer></prestashop>`;
-            const custRes = await postPrestaData('customers', custXml);
-            custId = extractXmlId(custRes, 'id');
-            if (!custId) throw new Error("Erreur ID customer");
-            localHistory.customers.push(custId);
-            emailToCustIdMap[email] = custId;
-          }
-
-          // Créer Adresse s'il n'existe pas déjà
-          let addrId = emailToAddrIdMap[email];
-          if (!addrId) {
-            const addrXml = `<prestashop><address><id_customer>${custId}</id_customer><id_country>8</id_country><alias>Maison</alias><lastname>${nom}</lastname><firstname>Client</firstname><address1>${adresse}</address1><city>Ville</city></address></prestashop>`;
-            const addrRes = await postPrestaData('addresses', addrXml);
-            addrId = extractXmlId(addrRes, 'id');
-            if (!addrId) throw new Error("Erreur ID address");
-            localHistory.addresses.push(addrId);
-            emailToAddrIdMap[email] = addrId;
-          }
+          const custId = emailToCustIdMap[email];
+          const addrId = emailToAddrIdMap[email];
 
           // Parser les achats : [("T_01";3;"ngoza"), ...]
-          const achatRaw = row.achat || "";
+          const achatRaw = getRowVal(row, ['achat']) || "";
           const regex = /\("([^"]+)";(\d+);"([^"]*)"\)/g;
           let match;
           let cartRows = "";
           let orderTTC = 0;
           let orderHT = 0;
+
+          const groupedCartItems = {};
 
           while ((match = regex.exec(achatRaw)) !== null) {
             const pRef = match[1];
@@ -609,40 +665,49 @@ export default function ImportExportManager() {
 
             const productId = refToIdMap[pRef];
             const combId = refToCombMap[`${pRef}_${pVar}`] || 0;
-            //const combId = refToCombMap[`${pRef}_${pVar}`] ?? refToCombMap[`${pRef}-${pVar}`] ?? 0;
+            
             if (!productId) throw new Error(`Référence produit ${pRef} non trouvée dans le panier de ${email}`);
 
-            // === CALCUL DES TAXES ET TOTAUX DE LA COMMANDE ===
             if (files.cat) {
-              const pRow = files.cat.find(r => sanitize.ref(r.reference || r.ref) === pRef);
+              const pRow = files.cat.find(r => sanitize.ref(getRowVal(r, ['reference', 'ref'])) === pRef);
               if (pRow) {
                 let taxRate = 0;
-                const taxRaw = pRow.Taxe || pRow.taxe || "";
+                const taxRaw = getRowVal(pRow, ['taxe', 'tax']) || "";
                 if (taxRaw) taxRate = parseFloat(taxRaw.replace(',', '.').replace('%', ''));
 
-                let unitTTC = parseFloat(sanitize.price(pRow.prix_ttc || pRow.prix)) || 0;
+                let unitTTC = parseFloat(sanitize.price(getRowVal(pRow, ['prix_ttc', 'prix']))) || 0;
 
-                // Vérifier si la déclinaison a un prix TTC spécifique
                 if (files.dec) {
-                  const dRow = files.dec.find(r => sanitize.ref(r.reference || r.ref) === pRef && sanitize.text(r.karazany || r.valeur) === pVar);
-                  if (dRow && dRow.prix_vente_ttc) {
-                    unitTTC = parseFloat(sanitize.price(dRow.prix_vente_ttc));
+                  const dRow = files.dec.find(r => sanitize.ref(getRowVal(r, ['reference', 'ref'])) === pRef && sanitize.text(getRowVal(r, ['karazany', 'valeur'])) === pVar);
+                  if (dRow) {
+                    const dPrice = getRowVal(dRow, ['prix_vente_ttc']);
+                    if (dPrice) {
+                      unitTTC = parseFloat(sanitize.price(dPrice));
+                    }
                   }
                 }
 
                 const unitHT = unitTTC / (1 + (taxRate / 100));
-
                 orderTTC += unitTTC * pQty;
                 orderHT += unitHT * pQty;
               }
             }
 
-            cartRows += `<cart_row><id_product>${productId}</id_product><id_product_attribute>${combId}</id_product_attribute><id_address_delivery>${addrId}</id_address_delivery><quantity>${pQty}</quantity></cart_row>`;
+            const itemKey = `${productId}_${combId}`;
+            if (groupedCartItems[itemKey]) {
+              groupedCartItems[itemKey] += pQty;
+            } else {
+              groupedCartItems[itemKey] = pQty;
+            }
+          }
+
+          for (const [key, qty] of Object.entries(groupedCartItems)) {
+            const [pId, cId] = key.split('_');
+            cartRows += `<cart_row><id_product>${pId}</id_product><id_product_attribute>${cId}</id_product_attribute><id_address_delivery>${addrId}</id_address_delivery><quantity>${qty}</quantity></cart_row>`;
           }
 
           if (!cartRows) throw new Error(`Panier vide détecté pour ${email}`);
-
-          // Créer Panier
+          
           const dateXml = dateFormatted ? `<date_add><![CDATA[${dateFormatted}]]></date_add><date_upd><![CDATA[${dateFormatted}]]></date_upd>` : '';
           const cartXml = `<prestashop><cart><id_currency>1</id_currency><id_lang>1</id_lang><id_customer>${custId}</id_customer><id_address_delivery>${addrId}</id_address_delivery><id_address_invoice>${addrId}</id_address_invoice>${dateXml}<associations><cart_rows>${cartRows}</cart_rows></associations></cart></prestashop>`;
           const cartRes = await postPrestaData('carts', cartXml);
@@ -650,19 +715,15 @@ export default function ImportExportManager() {
           if (!cartId) throw new Error("Erreur ID cart");
           localHistory.carts.push(cartId);
 
-          // Vérifier État de la commande de manière flexible
-          // Vérifier État de la commande (Mapping strict sur les 4 statuts)
           const isCartOnly = !etatStr || etatStr.includes("dans le panier");
           if (isCartOnly) {
             addLog(`Panier créé pour ${email} (Pas de commande)`, 'success');
           } else {
-            // Statut par défaut si commande confirmée : Payé (Réservation)
             let stateId = 2;
             if (etatStr.includes('payé') || etatStr.includes('paye')) stateId = 2;
             else if (etatStr.includes('livré') || etatStr.includes('livre')) stateId = 5;
             else if (etatStr.includes('annulé') || etatStr.includes('annule')) stateId = 6;
 
-            // Créer la commande (PrestaShop ignorera current_state ici, on l'enlève)
             const orderXml = `<prestashop><order><id_cart>${cartId}</id_cart><id_carrier>1</id_carrier><id_currency>1</id_currency><id_lang>1</id_lang><id_customer>${custId}</id_customer><id_address_delivery>${addrId}</id_address_delivery><id_address_invoice>${addrId}</id_address_invoice><module>ps_wirepayment</module><payment>Virement</payment><total_paid>${orderTTC.toFixed(6)}</total_paid><total_paid_tax_incl>${orderTTC.toFixed(6)}</total_paid_tax_incl><total_paid_tax_excl>${orderHT.toFixed(6)}</total_paid_tax_excl><total_paid_real>${orderTTC.toFixed(6)}</total_paid_real><total_products>${orderHT.toFixed(6)}</total_products><total_products_wt>${orderTTC.toFixed(6)}</total_products_wt><conversion_rate>1</conversion_rate>${dateXml}</order></prestashop>`;
 
             let orderId;
@@ -688,7 +749,6 @@ export default function ImportExportManager() {
             if (!orderId) throw new Error("Erreur ID order");
             localHistory.orders.push(orderId);
 
-            // --- NOUVEAU : FORCER LE STATUT VIA ORDER_HISTORIES ---
             if (orderId) {
               try {
                 const historyXml = `<prestashop><order_history><id_order>${orderId}</id_order><id_order_state>${stateId}</id_order_state></order_history></prestashop>`;
@@ -699,9 +759,7 @@ export default function ImportExportManager() {
                 addLog(`⚠️ Impossible d'appliquer le statut à la commande #${orderId}: ${historyErr.message}`, 'warning');
               }
             }
-            // ------------------------------------------------------
 
-            // Antidatage (si une date est fournie dans le CSV)
             if (dateFormatted && orderId) {
               try {
                 const orderResp = await fetch(`${BASE_URL}/orders/${orderId}?ws_key=${API_KEY}`);
@@ -727,7 +785,7 @@ export default function ImportExportManager() {
               addLog(`Commande #${orderId} créée pour ${email} (Date du jour)`, 'success');
             }
           }
-        }
+        });
       }
 
       addLog(" IMPORTATION TERMINÉE", "success");

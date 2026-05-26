@@ -3,33 +3,85 @@ import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { fetchPrestaData, extractValue } from '../services/apiClient';
 import '../assets/css/OrderList.css';
-import { getOrderById , submitOrderDuplicate} from '../services/orderService';
+import { getOrderById, duplicateOrderWithNewCart } from '../services/orderService';
+import { fetchStockAvailable } from '../services/productservice';
 
 export default function OrderList() {
   const { user, isAuthenticated } = useAuth();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [ duplicateCommande , setDuplicateCommande ] = useState(false);
-  const[ nombreDUplication , setNombreDublication] = useState(0);
- // const [orderStatus, setOrderStatus] = useState(null);
-  const handleDuplicate = async (ordersData) => {
-   // ordersData = 3;
-        if(duplicateCommande){
-          // setOrderStatus("success");
-          try {
-            const duplicateOrder = await getOrderById(ordersData.orderId);
-            const duplicateOrders= await submitOrderDuplicate(duplicateOrder);
-            setDuplicateCommande(duplicateOrders);
-            setNombreDublication(nombreDUplication + 1);
-          }
-          catch (error) { console.error("Erreur lors de la duplication de la commande :", error);
-           // setOrderStatus("error");
-          }
-        }else{
-          //setOrderStatus("error");
+  const [duplicateCommande, setDuplicateCommande] = useState(false);
+  const [nombreDUplication, setNombreDublication] = useState(0);
+  const [multiplier, setMultiplier] = useState(1);
+  const [selectedOrderForDuplication, setSelectedOrderForDuplication] = useState(null);
+  const [isCheckingStock, setIsCheckingStock] = useState(false);
+  const [stockValidationResults, setStockValidationResults] = useState([]);
+
+  useEffect(() => {
+    async function checkStock() {
+      setIsCheckingStock(true);
+      setStockValidationResults([]);
+
+      try {
+        const realOrderId = selectedOrderForDuplication.id.replace('order_', '');
+        const orderData = await getOrderById(realOrderId);
+        const orderRows = orderData.associations?.order_rows?.order_row;
+        const productList = Array.isArray(orderRows) ? orderRows : (orderRows ? [orderRows] : []);
+        const results = [];
+        for (const product of productList) {
+          const productId = extractValue(product.product_id);
+          const productAttributeId = extractValue(product.product_attribute_id) || 0;
+          const qtyInOrder = parseInt(extractValue(product.product_quantity));
+          const qtyRequired = qtyInOrder * multiplier;
+
+          const availableStock = await fetchStockAvailable(productId, productAttributeId);
+
+          results.push({
+            name: extractValue(product.product_name),
+            qty_required: qtyRequired,
+            stock_available: availableStock,
+            is_ok: availableStock >= qtyRequired
+          });
+
+          setStockValidationResults(results);
+
         }
-    };
+      }
+      catch (err) {
+        console.error("Erreur lors de la vérification du stock :", err);
+      }
+      finally {
+        setIsCheckingStock(false);
+      }
+
+    }
+    if (selectedOrderForDuplication) {
+      checkStock();
+    }
+  }, [selectedOrderForDuplication, multiplier]);
+  const executeDuplication = async () => {
+    const hasOutOfStock = stockValidationResults.some(res => !res.is_ok);
+    if (hasOutOfStock) {
+      alert("Désolé, il n'y a pas assez de stock pour cette commande");
+      return;
+    }
+    try {
+      setIsCheckingStock(true);
+      const realOrderId = selectedOrderForDuplication.id.replace('order_', '');
+      const orderData = await getOrderById(realOrderId);
+      await duplicateOrderWithNewCart(orderData, multiplier);
+      setSelectedOrderForDuplication(null);
+      window.location.reload();
+    }
+    catch (error) {
+      console.error("Erreur lors de la duplication de la commande :", error);
+    }
+    finally {
+      setIsCheckingStock(false);
+    }
+  }
+
   // État pour gérer l'accordéon
   const [expandedOrder, setExpandedOrder] = useState(null);
 
@@ -65,9 +117,9 @@ export default function OrderList() {
         const oArray = ordersData?.orders?.order || [];
         const allOrdersList = Array.isArray(oArray) ? oArray : [oArray];
         const userOrders = allOrdersList.filter(o => extractValue(o.id_customer) === String(user.id));
-        
+
         //recuperer liste des produits pour les dupliquer dans le panier
-        const ordersDataByline=await getOrderById(userOrders[0].id);
+        const ordersDataByline = await getOrderById(userOrders[0].id);
         console.log("ordersDataByline", ordersDataByline);
         setDuplicateCommande(ordersDataByline);
 
@@ -75,37 +127,37 @@ export default function OrderList() {
 
         // Traitement des commandes selon la machine à états
         userOrders.forEach(order => {
-            const orderRows = order.associations?.order_rows?.order_row;
-            const prods = Array.isArray(orderRows) ? orderRows : (orderRows ? [orderRows] : []);
-            
-            const products = prods.map(p => ({
-                qty: extractValue(p.product_quantity),
-                name: extractValue(p.product_name),
-                price: parseFloat(extractValue(p.unit_price_tax_incl) || extractValue(p.product_price) || 0).toFixed(2)
-            }));
+          const orderRows = order.associations?.order_rows?.order_row;
+          const prods = Array.isArray(orderRows) ? orderRows : (orderRows ? [orderRows] : []);
 
-            // --- HARMONISATION DES STATUTS CLIENT AVEC LE BACKOFFICE ---
-            const stateId = String(extractValue(order.current_state));
-            let stateInfo = { text: 'En cours', color: '#FFA500' };
-            
-            // On regroupe le statut 2 et le 11 sous le même affichage "Payé"
-            if (stateId === '2' || stateId === '11') {
-              stateInfo = { text: 'Payé', color: '#28a745' };
-            } else if (stateId === '5') {
-              stateInfo = { text: 'Livré', color: '#107c41' };
-            } else if (stateId === '6') {
-              stateInfo = { text: 'Annulé', color: '#dc3545' };
-            }
+          const products = prods.map(p => ({
+            qty: extractValue(p.product_quantity),
+            name: extractValue(p.product_name),
+            price: parseFloat(extractValue(p.unit_price_tax_incl) || extractValue(p.product_price) || 0).toFixed(2)
+          }));
 
-            combinedItems.push({
-                type: 'order',
-                id: `order_${extractValue(order.id)}`,
-                ref: extractValue(order.reference),
-                date: new Date(extractValue(order.date_add)),
-                total: parseFloat(extractValue(order.total_paid_tax_incl) || 0).toFixed(2),
-                stateInfo,
-                products
-            });
+          // --- HARMONISATION DES STATUTS CLIENT AVEC LE BACKOFFICE ---
+          const stateId = String(extractValue(order.current_state));
+          let stateInfo = { text: 'En cours', color: '#FFA500' };
+
+          // On regroupe le statut 2 et le 11 sous le même affichage "Payé"
+          if (stateId === '2' || stateId === '11') {
+            stateInfo = { text: 'Payé', color: '#28a745' };
+          } else if (stateId === '5') {
+            stateInfo = { text: 'Livré', color: '#107c41' };
+          } else if (stateId === '6') {
+            stateInfo = { text: 'Annulé', color: '#dc3545' };
+          }
+
+          combinedItems.push({
+            type: 'order',
+            id: `order_${extractValue(order.id)}`,
+            ref: extractValue(order.reference),
+            date: new Date(extractValue(order.date_add)),
+            total: parseFloat(extractValue(order.total_paid_tax_incl) || 0).toFixed(2),
+            stateInfo,
+            products
+          });
         });
 
         combinedItems.sort((a, b) => b.date - a.date);
@@ -138,7 +190,7 @@ export default function OrderList() {
   return (
     <div className="order-list-container">
       <h2 className="order-list-title">Mes Commandes & Paniers</h2>
-      
+
       {orders.length === 0 ? (
         <div className="empty-orders">Vous n'avez passé aucune commande pour le moment.</div>
       ) : (
@@ -157,13 +209,13 @@ export default function OrderList() {
                   <div classname="order-info-main">
                     <span className="order-ref">ID : <strong>{item.id}</strong></span>
                     <span className="order-date">{formatDate(item.date)}</span>
-                    </div>
-                  
+                  </div>
+
                   <div className="order-info-side">
                     <span className="order-total">{item.total} €</span>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
-                      <span 
-                        className="order-status-badge" 
+                      <span
+                        className="order-status-badge"
                         style={{ backgroundColor: item.stateInfo.color, color: '#fff' }}
                       >
                         {item.stateInfo.text.toUpperCase()}
@@ -184,20 +236,23 @@ export default function OrderList() {
                             <span className="product-qty">{prod.qty}x</span>
                             <span className="product-name">{prod.name}</span>
                             <span className="product-price">{prod.price} €</span>
-                          
+
                           </div>
                         ))}
-                            <button 
-                            onClick={ () => handleDuplicate({
-                              orderId: item.id.replace('order_', '')
-                            })}
-                            title="Dupliquer cette commande dans le panier"
-                            className="duplicate-btn"
-                            >
-                              Dupliquer
-                            </button>
+                        <input type="number" min="1" value={multiplier} onChange={(e) => setMultiplier(e.target.value) || 1}></input>
+                        <button
+                          onClick={() => {
+                            setSelectedOrderForDuplication(item)
+                          }}
+
+                        >
+                          Dupliquer
+                        </button>
+
                       </div>
+
                     </div>
+
                   </div>
                 )}
               </div>
@@ -205,6 +260,54 @@ export default function OrderList() {
           })}
         </div>
       )}
+      {/* MODAL DE VÉRIFICATION DE STOCK */}
+      {selectedOrderForDuplication && (
+        <div className="modal-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div className="modal-content" style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', minWidth: '400px' }}>
+            <h3>Vérification des stocks</h3>
+
+            {/* 1. On gère l'état de chargement */}
+            {isCheckingStock ? (
+              <p>Vérification en cours, veuillez patienter...</p>
+            ) : (
+              <div>
+                {/* 2. On affiche la liste des produits */}
+                <ul style={{ listStyle: 'none', padding: 0 }}>
+                  {stockValidationResults.map((res, index) => (
+                    <li key={index} style={{ marginBottom: '10px', borderBottom: '1px solid #eee', paddingBottom: '10px' }}>
+                      <strong>{res.name}</strong><br />
+                      Demandé : {res.qty_required} | En stock : {res.stock_available}
+                      <span style={{ color: res.is_ok ? 'green' : 'red', fontWeight: 'bold', marginLeft: '10px' }}>
+                        {res.is_ok ? '✓ OK' : '✗ RUPTURE'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+
+                {/* 3. Les boutons d'action (Annuler / Confirmer) */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+
+                  {/* Bouton Annuler : Il vide l'état, ce qui ferme automatiquement le modal */}
+                  <button
+                    onClick={() => setSelectedOrderForDuplication(null)}
+                    style={{ padding: '8px 15px', cursor: 'pointer' }}
+                  >
+                    Annuler
+                  </button>
+
+                  {/* Bouton Confirmer */}
+                  <button
+                    onClick={executeDuplication}
+                  >
+                    Confirmer la duplication
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

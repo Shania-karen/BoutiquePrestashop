@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { fetchPrestaData, extractValue, BASE_URL, API_KEY } from '../services/apiClient';
+import { calculateDashboardStats } from '../services/statService';
 
 export default function CategoryStockTable() {
   const [productsStock, setProductsStock] = useState([]);
+  const [categoryFinancials, setCategoryFinancials] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -90,9 +92,9 @@ export default function CategoryStockTable() {
         const cid = extractValue(p.id_category_default) || '0';
         const categoryName = categoriesMap[cid] || 'Non catégorisé';
 
-        const physicalQty = physicalStockMap[pid] || 0;
+        const availableQty = physicalStockMap[pid] || 0; // PrestaShop's stock_availables = Qté disponible
         const reservedQty = reservedProductMap[pid] || 0;
-        const availableQty = physicalQty - reservedQty;
+        const physicalQty = availableQty + reservedQty;
 
         return {
           id: pid,
@@ -111,6 +113,41 @@ export default function CategoryStockTable() {
       });
 
       setProductsStock(finalizedProducts);
+
+      // 6. Récupérer TOUTES les commandes au format JSON natif pour que statService.js reçoive le bon format
+      const [ordersRes, productsRes, categoriesRes, stocksRes] = await Promise.all([
+        fetch(`${BASE_URL}/orders?display=full&limit=0,5000&ws_key=${API_KEY}&output_format=JSON`),
+        fetch(`${BASE_URL}/products?display=[id,id_category_default,wholesale_price,supplier_reference,price]&limit=0,5000&ws_key=${API_KEY}&output_format=JSON`),
+        fetch(`${BASE_URL}/categories?display=[id,name]&limit=0,5000&ws_key=${API_KEY}&output_format=JSON`),
+        fetch(`${BASE_URL}/stock_availables?display=[id_product,id_product_attribute,quantity]&limit=0,5000&ws_key=${API_KEY}&output_format=JSON`)
+      ]);
+
+      if (ordersRes.ok && productsRes.ok && categoriesRes.ok && stocksRes.ok) {
+        const [ordersData, productsData, categoriesData, stocksData] = await Promise.all([
+          ordersRes.json(),
+          productsRes.json(),
+          categoriesRes.json(),
+          stocksRes.json()
+        ]);
+
+        const extractPrestaArray = (data, mainKey, subKey) => {
+          if (!data || !data[mainKey]) return [];
+          if (Array.isArray(data[mainKey])) return data[mainKey];
+          if (data[mainKey][subKey]) {
+            return Array.isArray(data[mainKey][subKey]) ? data[mainKey][subKey] : [data[mainKey][subKey]];
+          }
+          return Object.values(data[mainKey]);
+        };
+
+        const rawOrders = extractPrestaArray(ordersData, 'orders', 'order');
+        const rawProducts = extractPrestaArray(productsData, 'products', 'product');
+        const rawCategories = extractPrestaArray(categoriesData, 'categories', 'category');
+        const rawStocks = extractPrestaArray(stocksData, 'stock_availables', 'stock_available');
+
+        const stats = calculateDashboardStats(rawOrders, rawProducts, rawCategories, rawStocks);
+        setCategoryFinancials(stats.profitByCategory || []);
+      }
+
     } catch (err) {
       console.error("Erreur consolidation des produits :", err);
       setError("Impossible de charger le tableau des produits.");
@@ -130,6 +167,30 @@ export default function CategoryStockTable() {
            p.category.toLowerCase().includes(term) || 
            p.id.includes(term);
   });
+
+  const displayedFinancials = categoryFinancials.filter(cat => {
+    const term = searchTerm.toLowerCase();
+    return cat.categoryName.toLowerCase().includes(term);
+  });
+
+  const totalFinancials = displayedFinancials.reduce((acc, cat) => {
+    acc.qty += cat.qty;
+    acc.ventes += cat.ventes;
+    acc.ventesTTC += cat.ventesTTC;
+    acc.achats += cat.achats;
+    acc.achatsTTC += cat.achatsTTC;
+    acc.profit += cat.profit;
+    acc.profitTTC += cat.profitTTC;
+    return acc;
+  }, { qty: 0, ventes: 0, ventesTTC: 0, achats: 0, achatsTTC: 0, profit: 0, profitTTC: 0 });
+  const totalMarge = totalFinancials.ventes > 0 ? (totalFinancials.profit / totalFinancials.ventes) * 100 : 0;
+
+  const totalProducts = displayedProducts.reduce((acc, prod) => {
+    acc.physicalQty += prod.physicalQty;
+    acc.reservedQty += prod.reservedQty;
+    acc.availableQty += prod.availableQty;
+    return acc;
+  }, { physicalQty: 0, reservedQty: 0, availableQty: 0 });
 
   if (loading) {
     return (
@@ -177,6 +238,67 @@ export default function CategoryStockTable() {
         </div>
       </div>
 
+      {/* NOUVEAU TABLEAU: Statistiques Financières par Catégorie */}
+      <div style={{ marginBottom: '40px', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '4px', overflowX: 'auto', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
+        <h3 style={{ margin: '0', padding: '15px 20px', borderBottom: '1px solid #e0e0e0', background: '#fafafa', color: '#333', fontSize: '16px' }}>
+          Statistiques Financières par Catégorie
+        </h3>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}>
+          <thead>
+            <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #e0e0e0' }}>
+              <th style={thStyle}>Catégorie</th>
+              <th style={{ ...thStyle, textAlign: 'center' }}>Quantité vendue</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Ventes HT</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Ventes TTC</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Achat HT</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Achat TTC</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Benéfice HT</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Bénefice TTC</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Marge</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayedFinancials.length === 0 ? (
+              <tr>
+                <td colSpan="9" style={{ padding: '20px', textAlign: 'center', color: '#999' }}>Aucune donnée financière disponible pour les filtres actuels.</td>
+              </tr>
+            ) : (
+              <>
+                {displayedFinancials.map(cat => (
+                  <tr 
+                    key={cat.categoryId} 
+                    style={{ borderBottom: '1px solid #f0f0f0', transition: 'background 0.2s' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#fcfcfc'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = '#fff'}
+                  >
+                    <td style={{ ...tdStyle, fontWeight: 600 }}>{cat.categoryName}</td>
+                    <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 'bold' }}>{cat.qty}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{cat.ventes.toFixed(2)} €</td>
+                    <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 'bold', color: '#000' }}>{cat.ventesTTC.toFixed(2)} €</td>
+                    <td style={{ ...tdStyle, textAlign: 'right', color: '#d32f2f' }}>{cat.achats.toFixed(2)} €</td>
+                    <td style={{ ...tdStyle, textAlign: 'right', color: '#c62828', fontWeight: '500' }}>{cat.achatsTTC.toFixed(2)} €</td>
+                    <td style={{ ...tdStyle, textAlign: 'right', color: '#388e3c' }}>{cat.profit.toFixed(2)} €</td>
+                    <td style={{ ...tdStyle, textAlign: 'right', color: '#2e7d32', fontWeight: 'bold' }}>{cat.profitTTC.toFixed(2)} €</td>
+                    <td style={{ ...tdStyle, textAlign: 'right', color: '#1976d2', fontWeight: 'bold' }}>{cat.marge.toFixed(2)} %</td>
+                  </tr>
+                ))}
+                <tr style={{ background: '#e3f2fd', borderTop: '2px solid #1565c0' }}>
+                  <td style={{ ...tdStyle, fontWeight: 'bold', color: '#1565c0', textTransform: 'uppercase' }}>TOTAL</td>
+                  <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 'bold', color: '#1565c0' }}>{totalFinancials.qty}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 'bold', color: '#1565c0' }}>{totalFinancials.ventes.toFixed(2)} €</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 'bold', color: '#1565c0' }}>{totalFinancials.ventesTTC.toFixed(2)} €</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 'bold', color: '#1565c0' }}>{totalFinancials.achats.toFixed(2)} €</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 'bold', color: '#1565c0' }}>{totalFinancials.achatsTTC.toFixed(2)} €</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 'bold', color: '#1565c0' }}>{totalFinancials.profit.toFixed(2)} €</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 'bold', color: '#1565c0' }}>{totalFinancials.profitTTC.toFixed(2)} €</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 'bold', color: '#1565c0' }}>{totalMarge.toFixed(2)} %</td>
+                </tr>
+              </>
+            )}
+          </tbody>
+        </table>
+      </div>
+
       <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '4px', overflowX: 'auto', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px' }}>
           <thead>
@@ -197,32 +319,40 @@ export default function CategoryStockTable() {
                 </td>
               </tr>
             ) : (
-              displayedProducts.map((prod) => (
-                <tr 
-                  key={prod.id} 
-                  style={{ borderBottom: '1px solid #f0f0f0', transition: 'background 0.2s' }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = '#fcfcfc'}
-                  onMouseLeave={(e) => e.currentTarget.style.background = '#fff'}
-                >
-                  <td style={{ ...tdStyle, color: '#888', fontSize: '12px' }}>{prod.id}</td>
-                  <td style={{ ...tdStyle, fontWeight: 600 }}>{prod.name}</td>
-                  <td style={{ ...tdStyle, color: '#555', fontSize: '13px' }}>
-                    <span style={{ background: '#f5f5f5', padding: '4px 8px', borderRadius: '4px' }}>
-                      {prod.category}
-                    </span>
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 'bold' }}>{prod.physicalQty}</td>
-                  <td style={{ ...tdStyle, textAlign: 'center', color: '#f57c00', fontWeight: '500' }}>{prod.reservedQty}</td>
-                  <td style={{ 
-                    ...tdStyle, 
-                    textAlign: 'center', 
-                    fontWeight: 'bold',
-                    color: prod.availableQty > 0 ? '#2e7d32' : '#c62828'
-                  }}>
-                    {prod.availableQty}
-                  </td>
+              <>
+                {displayedProducts.map((prod) => (
+                  <tr 
+                    key={prod.id} 
+                    style={{ borderBottom: '1px solid #f0f0f0', transition: 'background 0.2s' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#fcfcfc'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = '#fff'}
+                  >
+                    <td style={{ ...tdStyle, color: '#888', fontSize: '12px' }}>{prod.id}</td>
+                    <td style={{ ...tdStyle, fontWeight: 600 }}>{prod.name}</td>
+                    <td style={{ ...tdStyle, color: '#555', fontSize: '13px' }}>
+                      <span style={{ background: '#f5f5f5', padding: '4px 8px', borderRadius: '4px' }}>
+                        {prod.category}
+                      </span>
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 'bold' }}>{prod.physicalQty}</td>
+                    <td style={{ ...tdStyle, textAlign: 'center', color: '#f57c00', fontWeight: '500' }}>{prod.reservedQty}</td>
+                    <td style={{ 
+                      ...tdStyle, 
+                      textAlign: 'center', 
+                      fontWeight: 'bold',
+                      color: prod.availableQty > 0 ? '#2e7d32' : '#c62828'
+                    }}>
+                      {prod.availableQty}
+                    </td>
+                  </tr>
+                ))}
+                <tr style={{ background: '#e3f2fd', borderTop: '2px solid #1565c0' }}>
+                  <td colSpan="3" style={{ ...tdStyle, fontWeight: 'bold', textAlign: 'right', color: '#1565c0', paddingRight: '30px' }}>TOTAL GLOBAL</td>
+                  <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 'bold', color: '#1565c0', fontSize: '16px' }}>{totalProducts.physicalQty}</td>
+                  <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 'bold', color: '#1565c0', fontSize: '16px' }}>{totalProducts.reservedQty}</td>
+                  <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 'bold', color: '#1565c0', fontSize: '16px' }}>{totalProducts.availableQty}</td>
                 </tr>
-              ))
+              </>
             )}
           </tbody>
         </table>

@@ -9,6 +9,7 @@ import ShoppingCart from './components/ShoppingCart';
 import { ProtectedRoute, AccessDenied } from './components/ProtectedRoute';
 import OrderList from './components/OrderList';
 import ProfileSelector from './components/ProfileSelector';
+import CategoryStockManager from './components/CategoryStockManager';
 
 import './App.css';
 
@@ -55,6 +56,16 @@ function App() {
 
             {/* Redirection par défaut */}
             <Route path="/" element={<Navigate to="/profile" replace />} />
+            
+            {/* Gestionnaire de stock (Admin seulement, dans le contexte Front) */}
+            <Route 
+              path="/category-stock-manager" 
+              element={
+                <ProtectedRoute requireAdmin={true}>
+                  <CategoryStockManager />
+                </ProtectedRoute>
+              } 
+            />
           </Routes>
         </CartProvider>
       </AuthProvider>

@@ -13,18 +13,20 @@ export default function StatisticsPage() {
       try {
         setLoading(true);
         
-        const [ordersRes, productsRes, categoriesRes] = await Promise.all([
-          fetch(`${BASE_URL}/orders?display=full&ws_key=${API_KEY}&output_format=JSON`),
-          fetch(`${BASE_URL}/products?display=[id,id_category_default,wholesale_price]&ws_key=${API_KEY}&output_format=JSON`),
-          fetch(`${BASE_URL}/categories?display=[id,name]&ws_key=${API_KEY}&output_format=JSON`)
+        const [ordersRes, productsRes, categoriesRes, stocksRes] = await Promise.all([
+          fetch(`${BASE_URL}/orders?display=full&limit=0,5000&ws_key=${API_KEY}&output_format=JSON`),
+          fetch(`${BASE_URL}/products?display=[id,id_category_default,wholesale_price,supplier_reference,price]&limit=0,5000&ws_key=${API_KEY}&output_format=JSON`),
+          fetch(`${BASE_URL}/categories?display=[id,name]&limit=0,5000&ws_key=${API_KEY}&output_format=JSON`),
+          fetch(`${BASE_URL}/stock_availables?display=[id_product,id_product_attribute,quantity]&limit=0,5000&ws_key=${API_KEY}&output_format=JSON`)
         ]);
 
         if (!ordersRes.ok) throw new Error("Échec de la synchronisation.");
 
-        const [ordersData, productsData, categoriesData] = await Promise.all([
+        const [ordersData, productsData, categoriesData, stocksData] = await Promise.all([
           ordersRes.json(),
           productsRes.json(),
-          categoriesRes.json()
+          categoriesRes.json(),
+          stocksRes.json()
         ]);
         
         // Extracteur de tableau universel pour contrer le formatage imprévisible de PrestaShop
@@ -40,8 +42,9 @@ export default function StatisticsPage() {
         const rawOrders = extractPrestaArray(ordersData, 'orders', 'order');
         const rawProducts = extractPrestaArray(productsData, 'products', 'product');
         const rawCategories = extractPrestaArray(categoriesData, 'categories', 'category');
+        const rawStocks = extractPrestaArray(stocksData, 'stock_availables', 'stock_available');
 
-        const calculatedStats = calculateDashboardStats(rawOrders, rawProducts, rawCategories);
+        const calculatedStats = calculateDashboardStats(rawOrders, rawProducts, rawCategories, rawStocks);
         setStats(calculatedStats);
       } catch (err) {
         console.error("Erreur de récupération :", err);
@@ -70,85 +73,36 @@ export default function StatisticsPage() {
     return <div className="p-6 text-red-600 font-bold">{error}</div>;
   }
 
+  const kpiCard = (title, value, subtitle, bgColor = '#fff', textColor = '#000') => (
+    <div style={{
+      backgroundColor: bgColor,
+      color: textColor,
+      padding: '20px',
+      borderRadius: '4px',
+      border: bgColor === '#fff' ? '1px solid #e0e0e0' : 'none',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '6px',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+    }}>
+      <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', opacity: 0.8 }}>{title}</span>
+      <span style={{ fontSize: '1.8rem', fontWeight: 800 }}>{value}</span>
+      {subtitle && <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>{subtitle}</span>}
+    </div>
+  );
+
   return (
-    <div className="p-8 bg-gray-50 min-h-screen font-sans text-gray-800">
-      <div className="max-w-7xl mx-auto">
+    <div style={{ padding: '20px', backgroundColor: '#f9fafb', minHeight: '100vh', fontFamily: 'sans-serif' }}>
+      <h2 style={{ color: '#000', marginBottom: '4px' }}>Rapports Financiers</h2>
+      <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '20px' }}>Analyse des commandes payées et livrées (Hors Taxe)</p>
         
-        <div className="mb-8">
-          <h1 className="text-2xl font-black text-gray-900 tracking-tight">Rapports Financiers</h1>
-          <p className="text-xs text-gray-400 mt-1">Analyse des commandes payées et livrées (Hors Taxe)</p>
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-          
-          {/* Card Ventes */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full uppercase">Revenus</span>
-              <div className="p-2 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
-                <svg style={{ width: '24px', height: '24px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-              </div>
-            </div>
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-tight">Total Ventes (HT)</h3>
-            <p className="text-2xl font-black text-gray-900 mt-1 tracking-tight">{formatCurrency(stats?.totalSalesHT)}</p>
-          </div>
-
-          {/* Card Achats */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2.5 py-1 rounded-full uppercase">Charges</span>
-              <div className="p-2 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center">
-                <svg style={{ width: '24px', height: '24px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
-              </div>
-            </div>
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-tight">Total Achats (HT)</h3>
-            <p className="text-2xl font-black text-gray-900 mt-1 tracking-tight">{formatCurrency(stats?.totalPurchasesHT)}</p>
-          </div>
-
-          {/* Card Bénéfice */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full uppercase">Rentabilité</span>
-              <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
-                <svg style={{ width: '24px', height: '24px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
-              </div>
-            </div>
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-tight">Benefice</h3>
-            <p className={`text-2xl font-black mt-1 tracking-tight ${stats?.totalProfitHT >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-              {formatCurrency(stats?.totalProfitHT)}
-            </p>
-          </div>
-
-        </div>
-
-        {/* Graphique */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <div className="mb-6">
-            <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
-              <span className="w-1 h-4 bg-indigo-600 rounded-full block"></span>
-              Performance par catégorie
-            </h2>
-          </div>
-          <div className="w-full h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stats?.profitByCategory} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                <XAxis dataKey="categoryName" tick={{ fill: '#9ca3af', fontSize: 11 }} axisLine={{ stroke: '#e5e7eb' }} />
-                <YAxis tick={{ fill: '#9ca3af', fontSize: 11 }} axisLine={{ stroke: '#e5e7eb' }} tickFormatter={(v) => `${v} €`} />
-                <Tooltip 
-                  formatter={(value) => [formatCurrency(value), ""]}
-                  contentStyle={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #f3f4f6', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }} 
-                />
-                <Legend verticalAlign="top" height={40} iconType="circle" wrapperStyle={{ fontSize: '12px', fontWeight: 500 }} />
-                <Bar dataKey="ventes" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Ventes (HT)" barSize={14} />
-                <Bar dataKey="achats" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Achats (HT)" barSize={14} />
-                <Bar dataKey="profit" fill="#10b981" radius={[4, 4, 0, 0]} name="Bénéfice (HT)" barSize={14} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px', marginBottom: '30px' }}>
+        {kpiCard('Montant total des ventes HT', formatCurrency(stats?.totalSalesHT), "Chiffre d'affaires", '#fff', '#000')}
+        {kpiCard('Achat Total Produits (HT)', formatCurrency(stats?.initialInventoryValueHT), 'wholesale_price x stock initial', '#fff', '#000')}
+        {kpiCard('Coût des Ventes (HT)', formatCurrency(stats?.totalPurchasesHT), 'Coût de revient des marchandises', '#fff', '#000')}
+        {kpiCard('Bénéfice Brut (HT)', formatCurrency(stats?.totalProfitHT), 'Ventes HT - Coût des Ventes HT', '#000', '#fff')}
       </div>
+
     </div>
   );
 }

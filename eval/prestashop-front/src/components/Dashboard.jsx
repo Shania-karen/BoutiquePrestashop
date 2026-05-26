@@ -57,6 +57,12 @@ function Dashboard() {
         let prods = prodsData?.products?.product || [];
         if (!Array.isArray(prods)) prods = prods ? [prods] : [];
 
+        // Charger les déclinaisons pour les impacts de prix
+        const combsData = await fetchPrestaData('combinations?display=[id,price]', 0, 5000);
+        let combs = combsData?.combinations?.combination || [];
+        if (!Array.isArray(combs)) combs = combs ? [combs] : [];
+        const combMap = new Map(combs.map(c => [String(extractValue(c.id)), Number(extractValue(c.price)) || 0]));
+
         const productsWithStock = await Promise.all(prods.map(async (p) => {
           const pid = extractValue(p.id);
           const priceTTC = parseFloat(extractValue(p.price)) || 0;
@@ -104,13 +110,23 @@ function Dashboard() {
           const rows = Array.isArray(cartRows) ? cartRows : (cartRows ? [cartRows] : []);
           rows.forEach(row => {
             const productId = String(extractValue(row.id_product));
+            const attrId = String(extractValue(row.id_product_attribute));
             const qty = Number(extractValue(row.quantity)) || 0;
             const product = productMap.get(productId);
             if (!product || qty <= 0) return;
 
+            let impactHT = 0;
+            if (attrId && attrId !== '0') {
+               impactHT = combMap.get(attrId) || 0;
+            }
+
+            const unitHT = (Number(product.priceHT) || 0) + impactHT;
+            const taxRate = Number(product.taxRate) || 0;
+            const unitTTC = unitHT * (1 + (taxRate / 100));
+
             cartItems += qty;
-            cartHT += (Number(product.priceHT) || 0) * qty;
-            cartTTC += (Number(product.priceTTC) || 0) * qty;
+            cartHT += unitHT * qty;
+            cartTTC += unitTTC * qty;
           });
         });
 
@@ -160,23 +176,57 @@ function Dashboard() {
         dayMap[day] = { name: day, ventes: 0, montantTTC: 0, montantHT: 0, taxes: 0 };
       }
 
-      // TTC = total_paid (= somme des prix TTC des produits, car price = TTC et tax=0)
-      const orderTTC = Number(extractValue(order.total_paid)) || Number(extractValue(order.total_paid_tax_incl)) || 0;
-      
-      // HT = calculé depuis les order_rows en utilisant le taux de taxe par produit
+      // HT et TTC calculés depuis les order_rows en utilisant la même logique que statService
       let computedHT = 0;
+      let computedTTC = 0;
       if (order.associations?.order_rows?.order_row) {
         let rows = order.associations.order_rows.order_row;
         if (!Array.isArray(rows)) rows = [rows];
         rows.forEach(r => {
           const qty = Number(extractValue(r.product_quantity)) || 0;
-          const unitTTC = Number(extractValue(r.product_price)) || 0;
           const productId = extractValue(r.product_id);
-          const rate = taxRates[productId] || 0;
-          const unitHT = rate > 0 ? unitTTC / (1 + (rate / 100)) : unitTTC;
-          computedHT += unitHT * qty;
+          
+          const unitExcl = extractValue(r.unit_price_tax_excl);
+          const prodPrice = extractValue(r.product_price);
+          
+          let sellingPriceStored = 0;
+          if (unitExcl !== undefined && unitExcl !== null && unitExcl !== "") {
+            sellingPriceStored = parseFloat(unitExcl);
+          } else {
+            sellingPriceStored = parseFloat(prodPrice || 0);
+          }
+
+          const productInfo = allProducts.find(p => String(extractValue(p.id)) === String(productId));
+          
+          if (productInfo) {
+            const taxRate = Number(productInfo.taxRate) || 0;
+            const parentTTC = Number(productInfo.priceTTC) || 0;
+            
+            let unitHT = 0;
+            let unitTTC = 0;
+            
+            if (taxRate > 0) {
+              const impactHT = sellingPriceStored - parentTTC;
+              const parentHT = parentTTC / (1 + (taxRate / 100));
+              unitHT = parentHT + impactHT;
+              
+              const impactTTC = impactHT * (1 + (taxRate / 100));
+              unitTTC = parentTTC + impactTTC;
+            } else {
+              unitHT = sellingPriceStored;
+              unitTTC = sellingPriceStored;
+            }
+            
+            computedHT += unitHT * qty;
+            computedTTC += unitTTC * qty;
+          } else {
+            computedHT += sellingPriceStored * qty;
+            computedTTC += sellingPriceStored * qty;
+          }
         });
       }
+      
+      const orderTTC = computedTTC > 0 ? computedTTC : (Number(extractValue(order.total_paid)) || Number(extractValue(order.total_paid_tax_incl)) || 0);
       const orderHT = computedHT > 0 ? computedHT : orderTTC;
 
       dayMap[day].ventes     += 1;

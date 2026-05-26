@@ -111,88 +111,6 @@ export async function deleteDefaultOrderHistory(orderId) {
   }
 }
 
-export async function submitOrderDuplicate(orderItem) {
-
-    const orderXml = `<?xml version="1.0" encoding="UTF-8"?>
-<prestashop>
-  <order>
-    <id_cart>${orderItem.id_cart}</id_cart>
-    <id_address_delivery>${orderItem.id_address_delivery}</id_address_delivery>
-    <id_address_invoice>${orderItem.id_address_invoice}</id_address_invoice>
-    <id_currency>${orderItem.id_currency}</id_currency>
-    <id_lang>${orderItem.id_lang}</id_lang>
-    <id_customer>${orderItem.id_customer}</id_customer>
-    <id_carrier>1</id_carrier>
-    <module>ps_cashondelivery</module>
-    <payment>Paiement comptant a la livraison (Cash on delivery)</payment>
-    <total_paid>${orderItem.total}</total_paid>
-    <total_paid_real>${orderItem.totalPaidReal}</total_paid_real>
-    <total_products>${orderItem.subtotal}</total_products>
-    <total_products_wt>${orderItem.total}</total_products_wt>
-    <conversion_rate>1.000000</conversion_rate>
-    <secure_key>${orderItem.secure_key}</secure_key>
-  </order>
-</prestashop>`;
-
-    console.log('Envoi création commande...');
-    const orderRes = await fetch(`${BASE_URL}/orders?ws_key=${API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/xml' },
-      body: orderXml
-    });
-
-    const orderText = await orderRes.text();
-    let orderId;
-
-    if (!orderRes.ok) {
-      console.warn(`Erreur API commande (${orderRes.status}), vérification de la création...`);
-      // Attendre un peu que PrestaShop finalise l'insertion en base
-      await new Promise(r => setTimeout(r, 500));
-
-      try {
-        const checkRes = await fetch(`${BASE_URL}/orders?ws_key=${API_KEY}&filter[id_cart]=[${id_cart}]&display=[id]`);
-        if (checkRes.ok) {
-          const checkParsed = parser.parse(await checkRes.text());
-          if (checkParsed.prestashop?.orders?.order) {
-            let ordersList = checkParsed.prestashop.orders.order;
-            if (!Array.isArray(ordersList)) ordersList = [ordersList];
-            orderId = ordersList[0].id || ordersList[0]['@_id'];
-            console.log('✅ Commande trouvée malgré l\'erreur 500 (ID:', orderId, ')');
-          }
-        }
-      } catch (checkErr) {
-        console.warn('Vérification impossible:', checkErr);
-      }
-
-      if (!orderId) {
-        console.error('Erreur brute PrestaShop:', orderText);
-        const cleanMsg = orderText.replace(/<[^>]+>/g, '').substring(0, 150);
-        throw new Error(`Commande: ${orderRes.status} - ${cleanMsg}`);
-      }
-    } else {
-      const orderParsed = parser.parse(orderText);
-      orderId = orderParsed.prestashop?.order?.id;
-    }
-
-    if (!orderId) throw new Error('Pas d\'id dans réponse');
-
-    console.log('✓✓ Commande créée avec ID:', orderId);
-
-    // Si payé: enregistrer un vrai paiement (ps_order_payment)
-    if (isPaid) {
-      try {
-        const orderReference = await getOrderReference(orderId);
-        await createOrderPayment({
-          orderReference,
-          amount: total,
-          paymentMethod: extractValue(orderParsed?.prestashop?.order?.payment) || 'Online',
-        });
-      } catch (payErr) {
-        console.error('Erreur création order_payment:', payErr?.message || payErr);
-      }
-    }
-    return orderId;
-}
 
 export async function submitOrderToPrestashop(cartItems, shippingInfo, customer, totals) {
   try {
@@ -520,4 +438,141 @@ export async function updateOrderPaymentStatus(orderId, paymentStatusId) {
     console.error('❌ Erreur mise à jour paiement:', error.message);
     throw error;
   }
+}
+// N'oublie pas d'exporter la fonction pour pouvoir l'utiliser ailleurs
+export async function duplicateOrderWithNewCart(originalOrder, multiplier) {
+  console.log("Démarrage de la duplication propre...");
+
+  // 1. On récupère les identifiants
+  const id_address_delivery = extractValue(originalOrder.id_address_delivery);
+  const id_address_invoice = extractValue(originalOrder.id_address_invoice);
+  const id_currency = extractValue(originalOrder.id_currency);
+  const id_lang = extractValue(originalOrder.id_lang);
+  const id_customer = extractValue(originalOrder.id_customer);
+  const secure_key = extractValue(originalOrder.secure_key);
+
+  // 2. On prépare le panier
+  let cartRows = '';
+  const orderRows = originalOrder.associations?.order_rows?.order_row;
+  const prods = Array.isArray(orderRows) ? orderRows : (orderRows ? [orderRows] : []);
+
+  prods.forEach(p => {
+    const id_product = extractValue(p.product_id);
+    const id_product_attribute = extractValue(p.product_attribute_id) || 0;
+    const qty = parseInt(extractValue(p.product_quantity)) * multiplier;
+
+    cartRows += `<cart_row>
+      <id_product><![CDATA[${id_product}]]></id_product>
+      <id_product_attribute><![CDATA[${id_product_attribute}]]></id_product_attribute>
+      <quantity><![CDATA[${qty}]]></quantity>
+    </cart_row>`;
+  });
+
+  // 3. On crée le panier
+  const cartXml = `<?xml version="1.0" encoding="UTF-8"?>
+<prestashop>
+  <cart>
+    <id_customer><![CDATA[${id_customer}]]></id_customer>
+    <id_address_delivery><![CDATA[${id_address_delivery}]]></id_address_delivery>
+    <id_address_invoice><![CDATA[${id_address_invoice}]]></id_address_invoice>
+    <id_currency><![CDATA[${id_currency}]]></id_currency>
+    <id_lang><![CDATA[${id_lang}]]></id_lang>
+    <associations><cart_rows>${cartRows}</cart_rows></associations>
+  </cart>
+</prestashop>`;
+
+  const cartRes = await fetch(`${BASE_URL}/carts?ws_key=${API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/xml' },
+    body: cartXml
+  });
+
+  if (!cartRes.ok) throw new Error("Erreur lors de la création du panier");
+
+  const cartParsed = parser.parse(await cartRes.text());
+  const new_id_cart = cartParsed.prestashop?.cart?.id;
+  console.log("✓ Nouveau panier créé :", new_id_cart);
+
+  // 4. On calcule les nouveaux prix
+  const new_total_paid = (parseFloat(extractValue(originalOrder.total_paid)) * multiplier).toFixed(6);
+  const new_total_products = (parseFloat(extractValue(originalOrder.total_products)) * multiplier).toFixed(6);
+
+  // 5. On crée la commande (avec des valeurs de paiement sécurisées)
+  const orderXml = `<?xml version="1.0" encoding="UTF-8"?>
+<prestashop>
+  <order>
+    <id_cart>${new_id_cart}</id_cart>
+    <id_address_delivery>${id_address_delivery}</id_address_delivery>
+    <id_address_invoice>${id_address_invoice}</id_address_invoice>
+    <id_currency>${id_currency}</id_currency>
+    <id_lang>${id_lang}</id_lang>
+    <id_customer>${id_customer}</id_customer>
+    <id_carrier>1</id_carrier>
+    <module>ps_cashondelivery</module>
+    <payment>Paiement comptant a la livraison (Cash on delivery)</payment>
+    <total_paid>${new_total_paid}</total_paid>
+    <total_paid_real>${new_total_paid}</total_paid_real>
+    <total_products>${new_total_products}</total_products>
+    <total_products_wt>${new_total_paid}</total_products_wt>
+    <conversion_rate>1.000000</conversion_rate>
+    <secure_key>${secure_key}</secure_key>
+  </order>
+</prestashop>`;
+
+  const orderRes = await fetch(`${BASE_URL}/orders?ws_key=${API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/xml' },
+    body: orderXml
+  });
+
+  const orderText = await orderRes.text();
+  let newOrderId;
+
+  // --- LE SYSTÈME ANTI-PLANTAGE PRESTASHOP EST ICI ---
+  if (!orderRes.ok) {
+    console.warn(`Erreur API commande (${orderRes.status}), vérification en base (PrestaShop plante souvent ici)...`);
+
+    // On attend 500ms
+    await new Promise(r => setTimeout(r, 500));
+
+    // On cherche si la commande existe via le panier
+    try {
+      const checkRes = await fetch(`${BASE_URL}/orders?ws_key=${API_KEY}&filter[id_cart]=[${new_id_cart}]&display=[id]`);
+      if (checkRes.ok) {
+        const checkParsed = parser.parse(await checkRes.text());
+        if (checkParsed.prestashop?.orders?.order) {
+          let ordersList = checkParsed.prestashop.orders.order;
+          if (!Array.isArray(ordersList)) ordersList = [ordersList];
+          newOrderId = ordersList[0].id || ordersList[0]['@_id'];
+          console.log("✅ Commande récupérée malgré l'erreur 500 ! ID :", newOrderId);
+        }
+      }
+    } catch (e) {
+      console.warn("Impossible de vérifier si la commande a survécu :", e);
+    }
+
+    // Si on l'a vraiment pas trouvée, c'est une vraie erreur
+    if (!newOrderId) {
+      throw new Error(`PrestaShop a vraiment planté : ${orderRes.status} - ${orderText}`);
+    }
+  } else {
+    const orderParsed = parser.parse(orderText);
+    newOrderId = orderParsed.prestashop?.order?.id;
+  }
+
+  // 6. On valide directement la commande en "Livré"
+  if (newOrderId) {
+    console.log("Attente de 1 seconde pour laisser PrestaShop se calmer...");
+
+    // On met notre code en pause pendant 1000 millisecondes (1 seconde)
+    // Cela laisse le temps à PrestaShop de mettre son statut "Payé" (2)
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Et PAF, on l'écrase avec notre statut "Livré" (5) en dernier !
+    await updateOrderState(newOrderId, '5');
+    console.log("✓ Commande forcée en Livré !");
+  }
+
+
+  return newOrderId;
 }
